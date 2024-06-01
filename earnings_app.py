@@ -19,7 +19,7 @@ def fetch_earnings_tickers(specific_date):
     options.add_argument("--headless")  # Runs Chrome in headless mode.
     options.add_experimental_option('excludeSwitches', ['enable-logging'])  # Suppresses logging
     # Specify the version of Chrome driver
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install('91.0.4472.19')), options=options)
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager(version='91.0.4472.19').install()), options=options)
     tickers_list = []
     offset = 0
     size = 100
