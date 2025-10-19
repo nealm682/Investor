@@ -38,7 +38,7 @@ This application analyzes stock price changes based on earnings calendar events.
 ## Usage
 1. Run the Streamlit app:
     ```bash
-    streamlit run app.py
+    streamlit run earnings_app.py
     ```
 
 2. Open the app in your browser (usually at `http://localhost:8501`).
