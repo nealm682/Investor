@@ -1,4 +1,3 @@
-
 import streamlit as st
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -7,15 +6,20 @@ from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 import time
 from datetime import datetime, timedelta
-import yfinance as yf
 import pandas as pd
 import logging
+import robin_stocks.robinhood as r
+from src.robinhood_login import login_to_robinhood
 
 # Suppress Selenium logging
 logging.getLogger('selenium').setLevel(logging.ERROR)
 logging.getLogger('webdriver_manager').setLevel(logging.ERROR)
 
 def fetch_earnings_tickers(specific_date):
+    """
+    Scrapes Yahoo Finance for earnings calendar tickers.
+    Note: Robinhood doesn't provide earnings calendar, so we still use Yahoo Finance.
+    """
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
@@ -119,7 +123,10 @@ def fetch_earnings_tickers(specific_date):
             driver.quit()
         return []
 
-def calculate_tickers_change(tickers, percent_change_threshold, time_period):
+def calculate_tickers_change_robinhood(tickers, percent_change_threshold, time_period):
+    """
+    Calculate price changes using Robinhood's historical data API.
+    """
     if not tickers:
         st.warning("No tickers to analyze")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
@@ -132,36 +139,90 @@ def calculate_tickers_change(tickers, percent_change_threshold, time_period):
     status_text = st.empty()
     
     total = len(tickers)
-    st.info(f"Analyzing {total} tickers ({time_period} price change)...")
+    
+    # Convert time period to Robinhood's span format
+    span_mapping = {
+        '1mo': 'month',
+        '3mo': '3month',
+        '6mo': '3month',  # Robinhood doesn't have 6mo, we'll calculate from 3month
+        '1y': 'year',
+        '2y': '5year',    # Use 5year and filter
+        '5y': '5year'
+    }
+    
+    # Interval mapping
+    interval_mapping = {
+        '1mo': 'day',
+        '3mo': 'day',
+        '6mo': 'day',
+        '1y': 'week',
+        '2y': 'week',
+        '5y': 'week'
+    }
+    
+    span = span_mapping.get(time_period, 'year')
+    interval = interval_mapping.get(time_period, 'day')
+    
+    st.info(f"Analyzing {total} tickers ({time_period} price change using Robinhood data)...")
 
     for idx, ticker in enumerate(tickers):
         try:
             status_text.text(f"Processing {ticker} ({idx+1}/{total})")
             
-            # Download historical data for the specified period
-            hist = yf.download(ticker, period=time_period, progress=False, auto_adjust=True)
+            # Fetch historical data from Robinhood
+            historical_data = r.stocks.get_stock_historicals(
+                ticker,
+                interval=interval,
+                span=span,
+                bounds='regular'
+            )
             
-            if not hist.empty and len(hist) >= 2:
-                # Handle multi-level columns if present
-                if isinstance(hist.columns, pd.MultiIndex):
-                    hist.columns = hist.columns.get_level_values(0)
+            if historical_data and len(historical_data) >= 2:
+                # Extract closing prices
+                closes = []
+                dates = []
                 
-                # Get first and last closing prices
-                first_close = float(hist['Close'].iloc[0])
-                last_close = float(hist['Close'].iloc[-1])
+                for item in historical_data:
+                    if item.get('close_price'):
+                        closes.append(float(item['close_price']))
+                        dates.append(item['begins_at'])
                 
-                # Calculate percentage change
-                percent_change = ((last_close - first_close) / first_close) * 100
-                
-                all_results.append([ticker, round(percent_change, 2)])
-                
-                if abs(percent_change) > percent_change_threshold:
-                    if percent_change > 0:
-                        winners.append([ticker, round(percent_change, 2)])
+                if len(closes) >= 2:
+                    # Handle different time periods
+                    if time_period == '6mo':
+                        # Get last ~180 days from 3month data
+                        cutoff_days = 180
+                        # Calculate which index to start from
+                        total_days = len(closes)
+                        start_idx = max(0, total_days - cutoff_days)
+                        first_close = closes[start_idx]
+                        last_close = closes[-1]
+                    elif time_period == '2y':
+                        # Get last ~730 days from 5year data
+                        cutoff_days = 730
+                        total_days = len(closes)
+                        start_idx = max(0, total_days - cutoff_days)
+                        first_close = closes[start_idx]
+                        last_close = closes[-1]
                     else:
-                        losers.append([ticker, round(percent_change, 2)])
+                        # Standard: first to last
+                        first_close = closes[0]
+                        last_close = closes[-1]
+                    
+                    # Calculate percentage change
+                    percent_change = ((last_close - first_close) / first_close) * 100
+                    
+                    all_results.append([ticker, round(percent_change, 2)])
+                    
+                    if abs(percent_change) > percent_change_threshold:
+                        if percent_change > 0:
+                            winners.append([ticker, round(percent_change, 2)])
+                        else:
+                            losers.append([ticker, round(percent_change, 2)])
+                else:
+                    st.warning(f"Insufficient price data for {ticker}")
             else:
-                st.warning(f"Insufficient data for {ticker}")
+                st.warning(f"No historical data available for {ticker} from Robinhood")
                 
         except Exception as e:
             if len(ticker) <= 5:
@@ -191,7 +252,43 @@ def calculate_tickers_change(tickers, percent_change_threshold, time_period):
     return winners_df, losers_df, all_df
 
 # Streamlit UI
-st.title('Earnings Calendar Price Change Analyzer')
+st.title('Earnings Calendar Price Change Analyzer (Robinhood Edition)')
+
+# Sidebar for Robinhood credentials
+with st.sidebar:
+    st.subheader("Robinhood Credentials")
+    st.markdown("**Required for fetching price data**")
+    rh_username = st.text_input("Robinhood Username", "", key="rh_user")
+    rh_password = st.text_input("Robinhood Password", "", type="password", key="rh_pass")
+    
+    if st.button("Login to Robinhood"):
+        if not rh_username or not rh_password:
+            st.error("Please enter both username and password")
+        else:
+            import os
+            os.environ["ROBINHOOD_USERNAME"] = rh_username
+            os.environ["ROBINHOOD_PASSWORD"] = rh_password
+            
+            # Attempt login
+            with st.spinner("Logging in to Robinhood..."):
+                login_success = login_to_robinhood()
+                if login_success:
+                    st.session_state["rh_logged_in"] = True
+                    st.success("✅ Successfully logged in!")
+                    st.rerun()
+                else:
+                    st.session_state["rh_logged_in"] = False
+                    st.error("❌ Login failed. Check error messages above.")
+
+# Initialize session state
+if "rh_logged_in" not in st.session_state:
+    st.session_state["rh_logged_in"] = False
+
+# Check if logged in
+if not st.session_state["rh_logged_in"]:
+    st.warning("🔐 Please log in to Robinhood using the sidebar to continue.")
+    st.info("Enter your Robinhood credentials in the sidebar and click 'Login to Robinhood'")
+    st.stop()
 
 # User inputs
 specific_date = st.date_input("Select Earnings Calendar Date", datetime.today()).strftime('%Y-%m-%d')
@@ -215,7 +312,7 @@ percent_change_threshold = st.number_input("Enter Percentage Change Threshold", 
 
 # Button to run the analysis
 if st.button('Analyze Tickers'):
-    with st.spinner('Fetching tickers...'):
+    with st.spinner('Fetching tickers from Yahoo Finance earnings calendar...'):
         tickers = fetch_earnings_tickers(specific_date)
         
         if not tickers:
@@ -224,9 +321,14 @@ if st.button('Analyze Tickers'):
             st.success(f"Found {len(tickers)} tickers for {specific_date}")
             st.write("Ticker list:", ", ".join(tickers[:20]) + ("..." if len(tickers) > 20 else ""))
             
-            winners, losers, all_results = calculate_tickers_change(tickers, percent_change_threshold, time_period)
+            # Use Robinhood for price data
+            winners, losers, all_results = calculate_tickers_change_robinhood(
+                tickers, 
+                percent_change_threshold, 
+                time_period
+            )
             
-            st.success(f"Analysis completed!")
+            st.success(f"Analysis completed using Robinhood data!")
             
             # Show summary statistics
             total_analyzed = len(tickers)
@@ -262,6 +364,6 @@ if st.button('Analyze Tickers'):
             # Show all results
             st.subheader(f"📈 All Tickers - {period_display.title()} Performance")
             st.write(f"Sorted by percent change (highest to lowest)")
+            st.write(f"**Data Source**: Robinhood API via robin-stocks")
             if not all_results.empty:
                 st.dataframe(all_results, use_container_width=True, height=400)
-

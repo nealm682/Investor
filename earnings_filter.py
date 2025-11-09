@@ -125,8 +125,8 @@ def calculate_tickers_change(tickers, percent_change_threshold, time_period):
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     
     winners = []
-    losers = []
     all_results = []
+    filtered_winners = []  # Winners that pass the momentum filter
     
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -146,26 +146,71 @@ def calculate_tickers_change(tickers, percent_change_threshold, time_period):
                 if isinstance(hist.columns, pd.MultiIndex):
                     hist.columns = hist.columns.get_level_values(0)
                 
-                # Get first and last closing prices
+                # Get first and last closing prices for selected period
                 first_close = float(hist['Close'].iloc[0])
                 last_close = float(hist['Close'].iloc[-1])
                 
-                # Calculate percentage change
+                # Calculate percentage change for selected period
                 percent_change = ((last_close - first_close) / first_close) * 100
                 
+                # Add to all results (simplified, just the main period data)
                 all_results.append([ticker, round(percent_change, 2)])
                 
-                if abs(percent_change) > percent_change_threshold:
-                    if percent_change > 0:
-                        winners.append([ticker, round(percent_change, 2)])
+                # Get 1-year and 5-year data for momentum check (only for potential winners)
+                one_year_change = None
+                five_year_change = None
+                passes_momentum_filter = False
+                
+                if percent_change > percent_change_threshold:
+                    try:
+                        # Get 1-year data
+                        hist_1y = yf.download(ticker, period='1y', progress=False, auto_adjust=True)
+                        if not hist_1y.empty and len(hist_1y) >= 2:
+                            if isinstance(hist_1y.columns, pd.MultiIndex):
+                                hist_1y.columns = hist_1y.columns.get_level_values(0)
+                            one_year_change = ((float(hist_1y['Close'].iloc[-1]) - float(hist_1y['Close'].iloc[0])) / float(hist_1y['Close'].iloc[0])) * 100
+                        
+                        # Get 5-year data
+                        hist_5y = yf.download(ticker, period='5y', progress=False, auto_adjust=True)
+                        if not hist_5y.empty and len(hist_5y) >= 2:
+                            if isinstance(hist_5y.columns, pd.MultiIndex):
+                                hist_5y.columns = hist_5y.columns.get_level_values(0)
+                            five_year_change = ((float(hist_5y['Close'].iloc[-1]) - float(hist_5y['Close'].iloc[0])) / float(hist_5y['Close'].iloc[0])) * 100
+                        
+                        # Apply momentum filter: 5-year change should be greater than 1-year change
+                        if one_year_change is not None and five_year_change is not None:
+                            passes_momentum_filter = five_year_change > one_year_change
+                        
+                    except Exception as momentum_error:
+                        st.warning(f"Could not get momentum data for {ticker}: {str(momentum_error)}")
+                    
+                    # Create winner row with momentum data
+                    winner_row = [ticker, round(percent_change, 2)]
+                    if one_year_change is not None:
+                        winner_row.append(round(one_year_change, 2))
                     else:
-                        losers.append([ticker, round(percent_change, 2)])
+                        winner_row.append(None)
+                    if five_year_change is not None:
+                        winner_row.append(round(five_year_change, 2))
+                    else:
+                        winner_row.append(None)
+                    winner_row.append(passes_momentum_filter)
+                    
+                    winners.append(winner_row)
+                    
+                    # Add to filtered winners if it passes momentum filter
+                    if passes_momentum_filter:
+                        filtered_winners.append(winner_row)
             else:
                 st.warning(f"Insufficient data for {ticker}")
+                # Still add to all_results with None value
+                all_results.append([ticker, None])
                 
         except Exception as e:
             if len(ticker) <= 5:
                 st.warning(f"Error processing {ticker}: {str(e)}")
+            # Add to all_results with None value for failed tickers
+            all_results.append([ticker, None])
             continue
         
         progress_bar.progress((idx + 1) / total)
@@ -174,21 +219,33 @@ def calculate_tickers_change(tickers, percent_change_threshold, time_period):
     status_text.empty()
     
     # Dynamic column name based on time period
-    period_label = time_period.upper() + ' Change %'
+    period_label = time_period.upper() + ' Performance %'
     
-    winners_df = pd.DataFrame(winners, columns=['Ticker', period_label])
-    losers_df = pd.DataFrame(losers, columns=['Ticker', period_label])
-    all_df = pd.DataFrame(all_results, columns=['Ticker', period_label])
+    # Create DataFrames with momentum columns for winners
+    winner_columns = [
+        'Ticker', 
+        period_label, 
+        '1Y Change %', 
+        '5Y Change %', 
+        'Momentum Filter ✓'
+    ]
     
-    # Sort by percent change
+    winners_df = pd.DataFrame(winners, columns=winner_columns) if winners else pd.DataFrame()
+    filtered_winners_df = pd.DataFrame(filtered_winners, columns=winner_columns) if filtered_winners else pd.DataFrame()
+    
+    # All results simplified (just ticker and main period performance)
+    all_df = pd.DataFrame(all_results, columns=['Ticker', period_label]) if all_results else pd.DataFrame()
+    
+    # Sort by percent change (handle empty DataFrames)
     if not winners_df.empty:
         winners_df = winners_df.sort_values(period_label, ascending=False)
-    if not losers_df.empty:
-        losers_df = losers_df.sort_values(period_label, ascending=True)
-    if not all_df.empty:
-        all_df = all_df.sort_values(period_label, ascending=False)
+    if not filtered_winners_df.empty:
+        filtered_winners_df = filtered_winners_df.sort_values(period_label, ascending=False)
+    if not all_df.empty and period_label in all_df.columns:
+        # Only sort non-null values
+        all_df = all_df.sort_values(period_label, ascending=False, na_position='last')
     
-    return winners_df, losers_df, all_df
+    return winners_df, filtered_winners_df, all_df
 
 # Streamlit UI
 st.title('Earnings Calendar Price Change Analyzer')
@@ -211,7 +268,7 @@ time_period = st.selectbox(
     }[x]
 )
 
-percent_change_threshold = st.number_input("Enter Percentage Change Threshold", min_value=0, value=35)
+percent_change_threshold = st.number_input("Enter Percentage Change Threshold", min_value=0, value=70)
 
 # Button to run the analysis
 if st.button('Analyze Tickers'):
@@ -224,13 +281,13 @@ if st.button('Analyze Tickers'):
             st.success(f"Found {len(tickers)} tickers for {specific_date}")
             st.write("Ticker list:", ", ".join(tickers[:20]) + ("..." if len(tickers) > 20 else ""))
             
-            winners, losers, all_results = calculate_tickers_change(tickers, percent_change_threshold, time_period)
+            winners, filtered_winners, all_results = calculate_tickers_change(tickers, percent_change_threshold, time_period)
             
             st.success(f"Analysis completed!")
             
             # Show summary statistics
             total_analyzed = len(tickers)
-            total_extreme = len(winners) + len(losers)
+            total_winners = len(winners)
             period_display = {
                 '1mo': '1 month',
                 '3mo': '3 months',
@@ -240,24 +297,30 @@ if st.button('Analyze Tickers'):
                 '5y': '5 years'
             }[time_period]
             
-            st.info(f"📊 {total_extreme} out of {total_analyzed} tickers ({round(total_extreme/total_analyzed*100, 1)}%) changed by more than {percent_change_threshold}% over {period_display}")
+            st.info(f"📊 {total_winners} out of {total_analyzed} tickers ({round(total_winners/total_analyzed*100, 1)}%) gained more than {percent_change_threshold}% over {period_display}")
+            
+            # Add momentum filter summary
+            if not winners.empty:
+                momentum_pass_count = len(filtered_winners)
+                st.info(f"🚀 {momentum_pass_count} out of {len(winners)} winners ({round(momentum_pass_count/len(winners)*100, 1)}%) pass the momentum filter (5Y > 1Y performance)")
             
             col1, col2 = st.columns(2)
             with col1:
-                st.subheader("Winners")
+                st.subheader("🏆 Filtered Winners")
+                st.caption("Winners that pass momentum filter (5Y > 1Y)")
+                if not filtered_winners.empty:
+                    st.dataframe(filtered_winners, use_container_width=True)
+                    st.metric("Filtered Winners", len(filtered_winners))
+                else:
+                    st.info(f"No winners pass the momentum filter")
+                    
+            with col2:
+                st.subheader("All Winners")
                 if not winners.empty:
                     st.dataframe(winners, use_container_width=True)
                     st.metric("Total Winners", len(winners))
                 else:
                     st.info(f"No winners found with >{percent_change_threshold}% threshold")
-                    
-            with col2:
-                st.subheader("Losers")
-                if not losers.empty:
-                    st.dataframe(losers, use_container_width=True)
-                    st.metric("Total Losers", len(losers))
-                else:
-                    st.info(f"No losers found with >{percent_change_threshold}% threshold")
             
             # Show all results
             st.subheader(f"📈 All Tickers - {period_display.title()} Performance")
