@@ -19,7 +19,7 @@ This application analyzes stock price momentum based on earnings calendar events
 - **Company Intelligence**: Business summaries, sector/industry classification, key metrics
 - **Performance Metrics**: Clear display of 1-year vs 5-year performance comparison
 
-![Momentum Winner Cards](2025-11-09.png)
+![Momentum Winner Cards](Screenshot%202025-11-09%20090533.jpg)
 *Example of detailed company cards showing momentum winners with 5-year charts and business intelligence*
 
 ### 📈 Data-Driven Insights
@@ -145,7 +145,7 @@ Investor/
 ├── earnings_app.py         # Original simple analyzer
 ├── requirements.txt        # Python package dependencies
 ├── README.md              # This file
-├── 2025-11-09.png         # UI screenshot showing momentum cards
+├── Screenshot 2025-11-09 090533.jpg # UI screenshot showing momentum cards
 └── venv/                  # Virtual environment (not tracked in git)
 ```
 
