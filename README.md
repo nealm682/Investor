@@ -74,7 +74,7 @@ This tool eliminates the need to manually review tickers one-by-one. Instead of 
     - ChromeDriver is managed automatically by `webdriver-manager`
 
 ## Usage
-1. Run the enhanced momentum analyzer:
+1. Run the momentum analyzer:
     ```powershell
     streamlit run earnings_ui_filter.py
     ```
@@ -94,6 +94,11 @@ This tool eliminates the need to manually review tickers one-by-one. Instead of 
     - **Detailed Cards**: Scroll down for rich company profiles with charts and business intelligence
 
 ## How It Works
+
+This tool scrapes the Yahoo Finance Earnings Calendar (shown below) to identify companies with earnings announcements, then applies sophisticated momentum analysis.
+
+![Yahoo Finance Earnings Calendar](debug_screenshot.png)
+*Yahoo Finance Earnings Calendar - Source of earnings announcement data*
 
 ### `fetch_earnings_tickers(specific_date)`
 Scrapes Yahoo Finance earnings calendar for the specified date using Selenium:
@@ -140,13 +145,12 @@ See `requirements.txt` for complete list of dependencies.
 ## Project Structure
 ```
 Investor/
-├── earnings_ui_filter.py   # Enhanced momentum analyzer (MAIN APP)
-├── earnings_filter.py      # Basic filtering version  
-├── earnings_app.py         # Original simple analyzer
-├── requirements.txt        # Python package dependencies
-├── README.md              # This file
+├── earnings_ui_filter.py      # Main momentum analyzer application
+├── requirements.txt           # Python package dependencies
+├── README.md                 # This documentation file
 ├── Screenshot 2025-11-09 090533.jpg # UI screenshot showing momentum cards
-└── venv/                  # Virtual environment (not tracked in git)
+├── debug_screenshot.png      # Yahoo Finance Earnings Calendar reference
+└── venv/                     # Virtual environment (not tracked in git)
 ```
 
 ## Investment Philosophy
