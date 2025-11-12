@@ -1,8 +1,16 @@
-# Earnings Calendar Momentum Analyzer
+# Earnings Calendar Momentum Analyzer & SEC EDGAR Financial Analysis Suite
 
-This application analyzes stock price momentum based on earnings calendar events to identify true long-term winners. It fetches tickers with earnings announcements from Yahoo Finance and applies sophisticated filtering to find companies with sustained growth momentum - stocks that have performed well over multiple time horizons, indicating consistent investor confidence.
+This comprehensive investment analysis suite combines earnings calendar momentum screening with deep SEC EDGAR financial health analysis to identify true long-term winners. The toolkit fetches tickers with earnings announcements, applies sophisticated momentum filtering, and performs detailed financial analysis using official SEC filings.
 
 ## 🆕 Latest Enhancements
+
+### NEW: SEC EDGAR Financial Analysis Tool
+- **Real-Time SEC Data**: Direct integration with SEC EDGAR APIs for official financial data
+- **Revenue & Profitability Analysis**: Automatic extraction of income statement metrics
+- **Cash & Debt Analysis**: Balance sheet analysis for financial health assessment
+- **Recent Filings Tracking**: Display of latest 10-K/10-Q submissions
+- **Multi-Company Batch Processing**: Analyze multiple momentum stocks simultaneously
+- **Export Capabilities**: CSV export of financial analysis results
 
 ### Advanced Date Filtering Options
 - **Single Date Analysis**: Traditional single-day earnings analysis
@@ -13,7 +21,21 @@ This application analyzes stock price momentum based on earnings calendar events
 
 ## Key Philosophy
 
-**Finding True Momentum Winners**: If a stock grows year-over-year for 5 years, it must be a winner. This tool helps identify companies where investors consistently trust the business fundamentals by filtering for stocks where 5-year performance exceeds 1-year performance - indicating sustained, long-term growth rather than just recent volatility.
+**Finding True Momentum Winners**: If a stock grows year-over-year for 5 years, it must be a winner. This suite helps identify companies where investors consistently trust the business fundamentals by:
+
+1. **Momentum Filtering**: Finding stocks where 5-year performance exceeds 1-year performance
+2. **Financial Validation**: Using SEC EDGAR data to confirm revenue generation, profitability, and financial health  
+3. **Risk Assessment**: Analyzing cash position and debt levels for sustainable growth indicators
+
+This two-stage approach eliminates momentum traps and identifies companies with both market momentum AND fundamental strength.
+
+## Applications
+
+### 📈 Earnings Calendar Momentum Analyzer (`earnings.py`)
+Advanced momentum screening based on earnings calendar events with sophisticated filtering capabilities.
+
+### 💰 SEC EDGAR Financial Analysis Tool (`financials.py`) 
+Deep financial health analysis using official SEC filings for momentum-filtered companies.
 
 ## Features
 
@@ -34,6 +56,9 @@ This application analyzes stock price momentum based on earnings calendar events
 
 ![Momentum Winner Cards](Screenshot%202025-11-09%20090533.jpg)
 *Example of detailed company cards showing momentum winners with 5-year charts and business intelligence*
+
+![SEC EDGAR Financial Analysis](financials_snapshot.jpg)
+*NEW: SEC EDGAR Financial Analysis Tool showing real-time financial health assessment with revenue, profitability, and cash position analysis*
 
 ### 📈 Data-Driven Insights
 - Automatic pagination to retrieve all tickers from earnings calendar
@@ -94,30 +119,68 @@ This tool eliminates the need to manually review tickers one-by-one. Instead of 
     - ChromeDriver is managed automatically by `webdriver-manager`
 
 ## Usage
-1. Run the momentum analyzer:
+
+### 🚀 Quick Start - Two Application Workflow
+
+#### Step 1: Run Earnings Momentum Analyzer
+1. Open your first terminal and run the momentum analyzer:
     ```powershell
     streamlit run earnings.py
     ```
+    - Open in browser at `http://localhost:8501`
+    - Analyze earnings calendar data and export momentum stocks to CSV
 
-2. Open the app in your browser (usually at `http://localhost:8501`).
+#### Step 2: Run SEC EDGAR Financial Analyzer  
+2. Open a **second terminal** and run the financial analyzer:
+    ```powershell
+    streamlit run financials.py --server.port 8502
+    ```  
+    - Open in browser at `http://localhost:8502`
+    - Upload the CSV from Step 1 to analyze financial health of momentum stocks
 
-3. **Enhanced Date Selection** - Choose your filtering approach:
+### 📊 Earnings Calendar Momentum Analysis (`earnings.py`)
+
+1. Open the app in your browser (usually at `http://localhost:8501`).
+
+2. **Enhanced Date Selection** - Choose your filtering approach:
     - **Single Date**: Traditional single-day analysis for focused research
     - **Date Range**: Select start/end dates for comprehensive multi-day analysis  
     - **Multiple Specific Dates**: Add up to 10 specific dates for targeted screening
 
-4. Configure your momentum screening:
+3. Configure your momentum screening:
     - **Time Period**: Pick your analysis timeframe (1mo to 5y)
     - **Threshold**: Set percentage gain threshold for initial filtering
 
-5. **Analyze**: Click to start the momentum screening process with enhanced progress tracking
+4. **Analyze**: Click to start the momentum screening process with enhanced progress tracking
 
-6. Review Enhanced Results:
+5. Review Enhanced Results:
     - **Multi-Date Summary**: See breakdown of tickers found per date
     - **Summary Statistics**: View how many tickers pass each filter across all dates
     - **Filtered Winners**: Download CSV of momentum winners (5Y > 1Y performance)
     - **All Winners**: Download CSV of all tickers meeting threshold
     - **Detailed Cards**: Scroll down for rich company profiles with charts and business intelligence
+
+### 💰 SEC EDGAR Financial Analysis (`financials.py`)
+
+1. Open the financial analyzer at `http://localhost:8502`
+
+2. **Upload CSV Data**: Upload the momentum winners CSV from the earnings analyzer
+
+3. **Configure Analysis**:
+    - **Max companies to analyze**: Set limit (1-20 companies)
+    - **Analysis depth options**: Include filings info, detailed metrics
+
+4. **Start SEC Analysis**: Click "Start Analysis" to begin financial health assessment
+    - ⚠️ **Note**: Analysis may take 2-5 minutes due to SEC API rate limiting (10 requests/second)
+
+5. **Review Financial Results**:
+    - **Summary Metrics**: Revenue generating, profitable, strong cash position counts
+    - **Detailed Company Analysis**: Expandable cards showing:
+      - Financial health indicators (✅ Revenue Generating, ✅ Profitable, 🟢 Cash Position)
+      - Key metrics (Revenue, Net Income, Cash, Debt with actual dollar amounts)
+      - Recent SEC filings (10-K, 10-Q with filing dates)
+      - Financial summary and risk assessment
+    - **Export Results**: Download comprehensive financial analysis as CSV
 
 ## How It Works
 
@@ -184,26 +247,43 @@ See `requirements.txt` for complete list of dependencies.
 ```
 Investor/
 ├── earnings.py                       # Enhanced momentum analyzer with multi-date capabilities
+├── financials.py                     # NEW: SEC EDGAR financial analysis tool
 ├── earnings_ui_filter.py             # Legacy single-date analyzer (maintained for compatibility)
+├── sec_edgar.md                      # SEC EDGAR API documentation and authentication guide
 ├── requirements.txt                  # Python package dependencies
 ├── README.md                        # This comprehensive documentation
 ├── Screenshot 2025-11-09 090533.jpg # UI screenshot showing momentum cards
 ├── snapshot-processing-tickers.jpg  # Multi-date processing screenshot
+├── financials_snapshot.jpg          # SEC EDGAR financial analysis UI screenshot
 ├── debug_screenshot.png             # Yahoo Finance Earnings Calendar reference
 └── venv/                            # Virtual environment (not tracked in git)
 ```
 
 ## Investment Philosophy
 
-This tool embodies a momentum-based investment philosophy:
+This suite embodies a comprehensive momentum-based investment philosophy with financial validation:
 
 **Sustained Growth Indicator**: Companies showing consistent growth over 5 years demonstrate proven business models and management execution. When 5-year performance exceeds 1-year performance, it suggests the company isn't just riding a recent trend but has fundamental strengths.
 
-**Investor Confidence**: Year-over-year growth for 5 consecutive years indicates sustained investor confidence. The market continuously validates the company's value proposition.
+**Financial Health Validation**: Beyond momentum analysis, the SEC EDGAR integration provides crucial financial health verification:
+- **Revenue Confirmation**: Verify that momentum is backed by actual revenue generation
+- **Profitability Assessment**: Distinguish between revenue growth and actual profit generation  
+- **Cash Position Analysis**: Assess financial stability through cash vs. debt ratios
+- **Filing Compliance**: Recent SEC filings indicate regulatory compliance and transparency
 
-**Risk Mitigation**: By filtering out stocks with only recent gains, this approach helps avoid momentum traps and temporary rallies, focusing on companies with proven track records.
+**Investor Confidence**: Year-over-year growth for 5 consecutive years PLUS strong financials indicates sustained investor confidence with fundamental backing. The market continuously validates the company's value proposition through both price appreciation and financial performance.
 
-**Efficiency**: Instead of manually researching hundreds of earnings-related stocks, this tool automatically identifies the handful with genuine momentum characteristics.
+**Risk Mitigation**: By combining momentum filtering with financial health analysis, this approach helps avoid:
+- Momentum traps with weak fundamentals
+- Revenue-less growth companies
+- Debt-heavy unsustainable business models
+- Companies with compliance or transparency issues
+
+**Efficiency & Depth**: Instead of manually researching hundreds of earnings-related stocks, this suite automatically identifies companies with both momentum characteristics AND financial strength, providing a complete investment analysis workflow.
+
+**Two-Stage Validation Process**:
+1. **Stage 1**: Momentum screening identifies market-validated growth companies
+2. **Stage 2**: SEC EDGAR analysis confirms financial health and sustainability
 
 **Multi-Date Power**: The enhanced date filtering allows for sophisticated analysis strategies:
 - **Earnings Clusters**: Analyze entire weeks of earnings to catch sector-wide momentum
@@ -211,17 +291,28 @@ This tool embodies a momentum-based investment philosophy:
 - **Targeted Research**: Cherry-pick specific high-impact earning days for focused analysis
 
 ## Known Limitations
+
+### Earnings Calendar Analyzer
 - Yahoo Finance may rate-limit requests for large numbers of tickers
 - Some company information may be unavailable for newer/smaller companies
 - International stocks may have limited English business descriptions
 - Requires Google Chrome browser for web scraping functionality
 - 5-year historical data may not be available for recent IPOs
 
+### SEC EDGAR Financial Analyzer  
+- **SEC API Rate Limiting**: Limited to 10 requests per second, analysis of multiple companies takes time
+- **Data Availability**: Not all companies report all financial metrics in standardized XBRL format
+- **Recent IPOs**: Companies with limited SEC filing history may have incomplete data
+- **International Companies**: Foreign companies may have different filing requirements
+- **Real-Time Data**: SEC filings are typically quarterly/annual, not real-time financial data
+
 ## Troubleshooting
 
+### General Setup Issues
 **Issue**: Virtual environment activation fails on Windows PowerShell
 - **Solution**: Use `.\venv\Scripts\Activate.ps1` instead of just `activate`
 
+### Earnings Calendar Analyzer (`earnings.py`)
 **Issue**: ChromeDriver errors
 - **Solution**: Ensure Chrome browser is installed and up to date. The app automatically manages ChromeDriver.
 
@@ -237,6 +328,22 @@ This tool embodies a momentum-based investment philosophy:
 **Issue**: Weekend dates showing warnings
 - **Solution**: This is expected - earnings calendars typically have limited activity on weekends. The tool will still process these dates but results may be minimal.
 
+### SEC EDGAR Financial Analyzer (`financials.py`)
+**Issue**: "Could not load SEC ticker database" error
+- **Solution**: Check internet connection. The app downloads SEC's company ticker database on startup.
+
+**Issue**: Financial analysis taking too long  
+- **Solution**: Reduce the "Max companies to analyze" setting. SEC APIs are rate-limited to 10 requests/second.
+
+**Issue**: "CIK Not Found" for tickers
+- **Solution**: Some tickers may not be in SEC database (e.g., foreign companies, recent IPOs, delisted companies).
+
+**Issue**: "Revenue data not available" for established companies
+- **Solution**: Some companies may not report standardized XBRL data. Check recent SEC filings manually if needed.
+
+**Issue**: Port 8502 already in use
+- **Solution**: Use a different port: `streamlit run financials.py --server.port 8503`
+
 ## License
 This project is licensed under the MIT License.
 
@@ -245,6 +352,8 @@ Contributions are welcome! Please open an issue or submit a pull request.
 
 ## Acknowledgments
 - Yahoo Finance for providing earnings calendar and stock price data
+- **SEC EDGAR** for providing comprehensive financial data through public APIs
+- **SEC.gov** for maintaining transparent and accessible corporate filing systems
 - Selenium and Streamlit communities for their excellent tools
 - yfinance library for simplified Yahoo Finance API access
 
