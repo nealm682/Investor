@@ -214,7 +214,7 @@ def extract_quarterly_trends(facts_data):
                 units = us_gaap[concept].get('units', {})
                 if 'USD' in units:
                     values = units['USD']
-                    # Filter for quarterly data (60-120 days, 10-Q forms)
+                    # Filter for quarterly data (STRICTLY 60-120 days only)
                     quarterly_values = []
                     for v in values:
                         if v.get('val') is not None and v.get('end') and v.get('start'):
@@ -222,8 +222,8 @@ def extract_quarterly_trends(facts_data):
                                 start = datetime.strptime(v.get('start'), '%Y-%m-%d')
                                 end = datetime.strptime(v.get('end'), '%Y-%m-%d')
                                 period_days = (end - start).days
-                                # Quarterly period (60-120 days) and 10-Q forms
-                                if (60 <= period_days <= 120 or '10-Q' in v.get('form', '')):
+                                # Quarterly period STRICTLY 60-120 days (excludes 9-month cumulative at ~270 days)
+                                if 60 <= period_days <= 120:
                                     quarterly_values.append(v)
                             except:
                                 pass
@@ -285,8 +285,8 @@ def extract_key_financials(facts_data):
                         # Sort by end date (most recent first)
                         valid_values.sort(key=lambda x: x.get('end', ''), reverse=True)
                         
-                        # For point-in-time data (Cash, Debt, Assets, Liabilities), use most recent
-                        if metric_name in ['Cash', 'Debt', 'TotalAssets', 'TotalLiabilities']:
+                        # For point-in-time data (Cash, Debt, TotalDebt, Assets, Liabilities), use most recent
+                        if metric_name in ['Cash', 'Debt', 'TotalDebt', 'TotalAssets', 'TotalLiabilities']:
                             # Get the most recent point-in-time value
                             most_recent = valid_values[0]
                             key_metrics[metric_name] = {
@@ -319,10 +319,10 @@ def extract_key_financials(facts_data):
                                     except:
                                         pass
                                 
-                                # Categorize as annual (300+ days) or quarterly
-                                if period_days > 300 or '10-K' in form:
+                                # Categorize STRICTLY by period length (ignore form type to avoid 9-month confusion)
+                                if period_days >= 300:  # Annual = 300+ days
                                     annual_values.append(v)
-                                elif period_days > 60 or '10-Q' in form:
+                                elif 60 <= period_days <= 120:  # Quarterly = 60-120 days only (single quarter)
                                     quarterly_values.append(v)
                             
                             # PRIORITY: Use the most recent data by date, whether annual or quarterly
