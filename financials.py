@@ -183,22 +183,88 @@ def find_recent_filings(submissions_data, form_types=['10-K', '10-Q']):
     filings.sort(key=lambda x: x['filingDate'], reverse=True)
     return filings[:5]  # Return top 5 most recent
 
-def  extract_key_financials(facts_data):
-    """Extract key financial metrics from company facts"""
+def extract_quarterly_trends(facts_data):
+    """Extract quarterly financial trends for revenue, costs, and profit"""
+    if not facts_data or 'facts' not in facts_data:
+        return None
+    
+    facts = facts_data['facts']
+    us_gaap = facts.get('us-gaap', {})
+    
+    trends = {
+        'periods': [],
+        'revenues': [],
+        'costs': [],
+        'net_income': []
+    }
+    
+    # Revenue concepts
+    revenue_concepts = ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'SalesRevenueNet']
+    # Cost concepts
+    cost_concepts = ['CostOfRevenue', 'CostOfGoodsAndServicesSold', 'OperatingExpenses']
+    # Net income concepts
+    income_concepts = ['NetIncomeLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic']
+    
+    # Extract quarterly data for each metric
+    for concept_list, data_key in [(revenue_concepts, 'revenues'), 
+                                     (cost_concepts, 'costs'), 
+                                     (income_concepts, 'net_income')]:
+        for concept in concept_list:
+            if concept in us_gaap:
+                units = us_gaap[concept].get('units', {})
+                if 'USD' in units:
+                    values = units['USD']
+                    # Filter for quarterly data (60-120 days, 10-Q forms)
+                    quarterly_values = []
+                    for v in values:
+                        if v.get('val') is not None and v.get('end') and v.get('start'):
+                            try:
+                                start = datetime.strptime(v.get('start'), '%Y-%m-%d')
+                                end = datetime.strptime(v.get('end'), '%Y-%m-%d')
+                                period_days = (end - start).days
+                                # Quarterly period (60-120 days) and 10-Q forms
+                                if (60 <= period_days <= 120 or '10-Q' in v.get('form', '')):
+                                    quarterly_values.append(v)
+                            except:
+                                pass
+                    
+                    # Sort by end date and get 3 most recent
+                    quarterly_values.sort(key=lambda x: x.get('end', ''), reverse=True)
+                    
+                    if len(quarterly_values) >= 3 and not trends['periods']:
+                        # Store periods (only once)
+                        trends['periods'] = [v.get('end') for v in quarterly_values[:3]]
+                        trends['periods'].reverse()  # Oldest to newest for chart
+                    
+                    if quarterly_values:
+                        # Store values
+                        trend_data = [v.get('val', 0) for v in quarterly_values[:3]]
+                        trend_data.reverse()  # Oldest to newest
+                        trends[data_key] = trend_data
+                        break  # Found data for this metric
+    
+    # Only return if we have at least revenue data and 3 periods
+    if len(trends['periods']) >= 3 and trends['revenues']:
+        return trends
+    return None
+
+def extract_key_financials(facts_data):
+    """Extract key financial metrics from company facts - prioritizing most recent data"""
     if not facts_data or 'facts' not in facts_data:
         return {}
     
     facts = facts_data['facts']
     key_metrics = {}
     
-    # Common financial concepts to look for
+    # Common financial concepts to look for with improved concept mapping
     concepts_to_find = {
-        'Revenues': ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'SalesRevenueNet'],
-        'NetIncome': ['NetIncomeLoss', 'ProfitLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic'],
-        'TotalAssets': ['Assets', 'AssetsCurrent'],
-        'TotalLiabilities': ['Liabilities', 'LiabilitiesAndStockholdersEquity'],
-        'Cash': ['CashAndCashEquivalentsAtCarryingValue', 'Cash', 'CashCashEquivalentsAndShortTermInvestments'],
-        'Debt': ['DebtCurrent', 'LongTermDebt', 'DebtAndCapitalLeaseObligations']
+        'Revenues': ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'SalesRevenueNet', 'RevenueFromContractWithCustomerIncludingAssessedTax'],
+        'NetIncome': ['NetIncomeLoss', 'ProfitLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic', 'NetIncomeLossAttributableToParent'],
+        'TotalAssets': ['Assets', 'AssetsCurrent', 'AssetsNoncurrent'],
+        'TotalLiabilities': ['Liabilities', 'LiabilitiesAndStockholdersEquity', 'LiabilitiesCurrent'],
+        'Cash': ['CashAndCashEquivalentsAtCarryingValue', 'Cash', 'CashCashEquivalentsAndShortTermInvestments', 'CashAndCashEquivalentsFairValueDisclosure'],
+        'Debt': ['LongTermDebt', 'DebtCurrent', 'DebtAndCapitalLeaseObligations', 'ShortTermBorrowings', 'LongTermDebtCurrent', 'LongTermDebtNoncurrent'],
+        'TotalDebt': ['DebtAndCapitalLeaseObligations', 'LongTermDebt', 'Liabilities']  # Fallback to total liabilities if no specific debt
     }
     
     # Look in us-gaap taxonomy
@@ -207,42 +273,122 @@ def  extract_key_financials(facts_data):
     for metric_name, concept_list in concepts_to_find.items():
         for concept in concept_list:
             if concept in us_gaap:
-                # Get the most recent annual value
                 units = us_gaap[concept].get('units', {})
                 if 'USD' in units:
                     values = units['USD']
-                    # Filter for annual data (form 10-K) and most recent
-                    annual_values = [v for v in values if v.get('form') == '10-K']
-                    if annual_values:
-                        # Sort by end date and get most recent
-                        annual_values.sort(key=lambda x: x.get('end', ''), reverse=True)
-                        key_metrics[metric_name] = {
-                            'value': annual_values[0].get('val'),
-                            'date': annual_values[0].get('end'),
-                            'form': annual_values[0].get('form'),
-                            'concept': concept
-                        }
-                        break
+                    
+                    # Strategy: Get most recent data regardless of form type, but prefer more recent filings
+                    # Filter out invalid/null values and sort by end date
+                    valid_values = [v for v in values if v.get('val') is not None and v.get('end')]
+                    
+                    if valid_values:
+                        # Sort by end date (most recent first)
+                        valid_values.sort(key=lambda x: x.get('end', ''), reverse=True)
+                        
+                        # For point-in-time data (Cash, Debt, Assets, Liabilities), use most recent
+                        if metric_name in ['Cash', 'Debt', 'TotalAssets', 'TotalLiabilities']:
+                            # Get the most recent point-in-time value
+                            most_recent = valid_values[0]
+                            key_metrics[metric_name] = {
+                                'value': most_recent.get('val'),
+                                'date': most_recent.get('end'),
+                                'form': most_recent.get('form'),
+                                'filed': most_recent.get('filed'),
+                                'period_type': 'Point-in-Time',
+                                'concept': concept
+                            }
+                        else:
+                            # For period data (Revenues, NetIncome), get most recent period regardless of type
+                            # Sort all valid values by end date to get the absolute most recent
+                            annual_values = []
+                            quarterly_values = []
+                            
+                            for v in valid_values:
+                                form = v.get('form', '')
+                                start_date = v.get('start', '')
+                                end_date = v.get('end', '')
+                                
+                                # Calculate period length if we have start and end dates
+                                period_days = 0
+                                if start_date and end_date:
+                                    try:
+                                        from datetime import datetime
+                                        start = datetime.strptime(start_date, '%Y-%m-%d')
+                                        end = datetime.strptime(end_date, '%Y-%m-%d')
+                                        period_days = (end - start).days
+                                    except:
+                                        pass
+                                
+                                # Categorize as annual (300+ days) or quarterly
+                                if period_days > 300 or '10-K' in form:
+                                    annual_values.append(v)
+                                elif period_days > 60 or '10-Q' in form:
+                                    quarterly_values.append(v)
+                            
+                            # PRIORITY: Use the most recent data by date, whether annual or quarterly
+                            # Compare dates if we have both types
+                            selected_value = None
+                            period_type = ''
+                            
+                            if annual_values and quarterly_values:
+                                # Compare dates - use whichever is more recent
+                                annual_date = annual_values[0].get('end', '')
+                                quarterly_date = quarterly_values[0].get('end', '')
+                                
+                                if quarterly_date > annual_date:
+                                    selected_value = quarterly_values[0]
+                                    period_type = 'Quarterly'
+                                else:
+                                    selected_value = annual_values[0]
+                                    period_type = 'Annual'
+                            elif annual_values:
+                                selected_value = annual_values[0]
+                                period_type = 'Annual'
+                            elif quarterly_values:
+                                selected_value = quarterly_values[0]
+                                period_type = 'Quarterly'
+                            elif valid_values:
+                                selected_value = valid_values[0]  # Fallback to most recent
+                                period_type = 'Unknown Period'
+                            
+                            if selected_value:
+                                key_metrics[metric_name] = {
+                                    'value': selected_value.get('val'),
+                                    'date': selected_value.get('end'),
+                                    'form': selected_value.get('form'),
+                                    'filed': selected_value.get('filed'),
+                                    'period_type': period_type,
+                                    'start_date': selected_value.get('start'),
+                                    'concept': concept
+                                }
+                        
+                        break  # Found data for this metric, move to next
     
     return key_metrics
 
 def analyze_financial_health(metrics):
-    """Analyze financial health based on key metrics"""
+    """Analyze financial health based on key metrics with enhanced period tracking"""
     analysis = {
         'revenue_generating': False,
         'profitable': False,
         'debt_concerns': False,
         'cash_position': 'Unknown',
         'summary': '',
-        'details': {}
+        'details': {},
+        'periods': {}  # Track data periods for debugging
     }
     
     # Check revenue generation
     if 'Revenues' in metrics and metrics['Revenues']['value']:
         revenue = metrics['Revenues']['value']
+        revenue_data = metrics['Revenues']
+        analysis['periods']['revenue'] = f"{revenue_data.get('period_type', 'Unknown')} ending {revenue_data.get('date', 'Unknown')}"
+        
         if revenue > 0:
             analysis['revenue_generating'] = True
-            analysis['details']['revenue'] = f"${revenue:,.0f}"
+            # Format revenue with period info
+            period_info = f" ({revenue_data.get('period_type', 'Unknown')} ending {revenue_data.get('date', 'Unknown')})"
+            analysis['details']['revenue'] = f"${revenue:,.0f}{period_info}"
         else:
             analysis['details']['revenue'] = "No revenue reported"
     else:
@@ -251,39 +397,84 @@ def analyze_financial_health(metrics):
     # Check profitability
     if 'NetIncome' in metrics and metrics['NetIncome']['value']:
         net_income = metrics['NetIncome']['value']
+        net_income_data = metrics['NetIncome']
+        analysis['periods']['net_income'] = f"{net_income_data.get('period_type', 'Unknown')} ending {net_income_data.get('date', 'Unknown')}"
+        
         if net_income > 0:
             analysis['profitable'] = True
-            analysis['details']['net_income'] = f"${net_income:,.0f} (Profit)"
+            period_info = f" ({net_income_data.get('period_type', 'Unknown')} ending {net_income_data.get('date', 'Unknown')})"
+            analysis['details']['net_income'] = f"${net_income:,.0f} (Profit){period_info}"
         else:
-            analysis['details']['net_income'] = f"${net_income:,.0f} (Loss)"
+            period_info = f" ({net_income_data.get('period_type', 'Unknown')} ending {net_income_data.get('date', 'Unknown')})"
+            analysis['details']['net_income'] = f"${net_income:,.0f} (Loss){period_info}"
     else:
         analysis['details']['net_income'] = "Net income data not available"
     
-    # Analyze debt vs cash
+    # Analyze debt vs cash (point-in-time data)
     cash = metrics.get('Cash', {}).get('value', 0) or 0
     debt = metrics.get('Debt', {}).get('value', 0) or 0
+    total_debt = metrics.get('TotalDebt', {}).get('value', 0) or 0
     
-    analysis['details']['cash'] = f"${cash:,.0f}" if cash else "Cash data not available"
-    analysis['details']['debt'] = f"${debt:,.0f}" if debt else "Debt data not available"
+    # Use specific debt if available, otherwise use total debt/liabilities
+    effective_debt = debt if debt > 0 else total_debt
+    debt_label = "Debt" if debt > 0 else "Total Liabilities"
     
-    if cash > 0 and debt > 0:
-        if cash > debt * 2:
+    # Track cash data period
+    if 'Cash' in metrics:
+        cash_data = metrics['Cash']
+        analysis['periods']['cash'] = f"As of {cash_data.get('date', 'Unknown')}"
+        period_info = f" (As of {cash_data.get('date', 'Unknown')})"
+        analysis['details']['cash'] = f"${cash:,.0f}{period_info}" if cash else f"Cash data not available"
+    else:
+        analysis['details']['cash'] = "Cash data not available"
+    
+    # Track debt data period
+    if 'Debt' in metrics:
+        debt_data = metrics['Debt']
+        analysis['periods']['debt'] = f"As of {debt_data.get('date', 'Unknown')}"
+        period_info = f" (As of {debt_data.get('date', 'Unknown')})"
+        analysis['details']['debt'] = f"${debt:,.0f}{period_info}" if debt else f"Debt data not available"
+    elif 'TotalDebt' in metrics:
+        debt_data = metrics['TotalDebt']
+        analysis['periods']['debt'] = f"As of {debt_data.get('date', 'Unknown')}"
+        period_info = f" (As of {debt_data.get('date', 'Unknown')})"
+        analysis['details']['debt'] = f"${total_debt:,.0f} ({debt_label}){period_info}" if total_debt else f"Debt data not available"
+    else:
+        analysis['details']['debt'] = "Debt data not available"
+    
+    # Cash position analysis using effective debt
+    if cash > 0 and effective_debt > 0:
+        cash_to_debt_ratio = cash / effective_debt
+        if cash_to_debt_ratio > 2:
             analysis['cash_position'] = 'Strong'
-        elif cash > debt:
+        elif cash_to_debt_ratio > 1:
             analysis['cash_position'] = 'Adequate'
-        elif debt > cash * 2:
+        elif effective_debt > cash * 2:
             analysis['cash_position'] = 'Concerning'
             analysis['debt_concerns'] = True
         else:
             analysis['cash_position'] = 'Moderate'
+        
+        analysis['details']['cash_debt_ratio'] = f"{cash_to_debt_ratio:.2f}x"
+    elif cash > 0 and effective_debt == 0:
+        analysis['cash_position'] = 'Excellent (No Debt)'
+    elif cash == 0 and effective_debt > 0:
+        analysis['cash_position'] = 'Concerning (No Cash, Has Debt)'
     else:
         analysis['cash_position'] = 'Unknown'
     
-    # Generate summary
+    # Generate summary with period awareness
     revenue_status = "generating revenue" if analysis['revenue_generating'] else "not generating significant revenue"
     profit_status = "profitable" if analysis['profitable'] else "unprofitable"
     
-    analysis['summary'] = f"Company is {revenue_status} and {profit_status}. Cash position: {analysis['cash_position'].lower()}."
+    # Add period information to summary
+    latest_date = 'Unknown'
+    if 'Cash' in metrics and metrics['Cash'].get('date'):
+        latest_date = metrics['Cash']['date']
+    elif 'NetIncome' in metrics and metrics['NetIncome'].get('date'):
+        latest_date = metrics['NetIncome']['date']
+    
+    analysis['summary'] = f"Company is {revenue_status} and {profit_status}. Cash position: {analysis['cash_position'].lower()}. Data as of: {latest_date}"
     
     return analysis
 
@@ -323,6 +514,9 @@ def process_ticker_analysis(ticker, ticker_df):
         # Extract key financials
         key_metrics = extract_key_financials(facts_data)
         
+        # Extract quarterly trends
+        quarterly_trends = extract_quarterly_trends(facts_data)
+        
         # Analyze financial health
         analysis = analyze_financial_health(key_metrics)
         
@@ -338,7 +532,8 @@ def process_ticker_analysis(ticker, ticker_df):
             'debt_concerns': analysis['debt_concerns'],
             'summary': analysis['summary'],
             'financial_details': analysis['details'],
-            'key_metrics': key_metrics
+            'key_metrics': key_metrics,
+            'quarterly_trends': quarterly_trends
         }
         
         return result
@@ -378,11 +573,12 @@ def main():
                 {'Ticker': 'MSFT', 'CIK': '0000789019', 'Company Name': 'Microsoft Corporation'},
                 {'Ticker': 'TSLA', 'CIK': '0001318605', 'Company Name': 'Tesla Inc'},
                 {'Ticker': 'GOOGL', 'CIK': '0001652044', 'Company Name': 'Alphabet Inc'},
-                {'Ticker': 'AMZN', 'CIK': '0001018724', 'Company Name': 'Amazon.com Inc'}
+                {'Ticker': 'AMZN', 'CIK': '0001018724', 'Company Name': 'Amazon.com Inc'},
+                {'Ticker': 'TTMI', 'CIK': '0000755111', 'Company Name': 'TTM Technologies Inc'}
             ])
             
             st.markdown("**Sample companies you can use for testing:**")
-            st.dataframe(sample_data, hide_index=True)
+            st.dataframe(sample_data, hide_index=True, width='stretch')
             
             # Download sample CSV
             csv_sample = sample_data.to_csv(index=False)
@@ -396,10 +592,43 @@ def main():
         
         return
     
-    st.success(f"✅ Loaded {len(ticker_df):,} companies from SEC database")
-    
-    # Sidebar for file upload
+   
+    # Sidebar for file upload and testing
     with st.sidebar:
+        st.header("🧪 Quick Testing")
+        
+        # Single ticker test
+        test_ticker = st.text_input("Test single ticker (e.g., TTMI, AAPL)", placeholder="Enter ticker symbol")
+        if st.button("🔍 Test Ticker") and test_ticker:
+            if test_ticker.upper() in ticker_df['ticker'].values:
+                st.info(f"Testing {test_ticker.upper()}...")
+                result = process_ticker_analysis(test_ticker.upper(), ticker_df)
+                
+                if result['status'] == 'Success':
+                    st.success("✅ Analysis completed!")
+                    
+                    # Show basic results
+                    st.write(f"**Company:** {result['company_name']}")
+                    st.write(f"**Revenue Generating:** {'✅' if result['revenue_generating'] else '❌'}")
+                    st.write(f"**Profitable:** {'✅' if result['profitable'] else '❌'}")
+                    st.write(f"**Cash Position:** {result['cash_position']}")
+                    
+                    # Show raw metrics for debugging
+                    if 'key_metrics' in result and result['key_metrics']:
+                        with st.expander("Debug: Raw Data", expanded=False):
+                            for metric, data in result['key_metrics'].items():
+                                st.write(f"**{metric}:** ${data.get('value', 0):,.0f}")
+                                st.write(f"  - Date: {data.get('date', 'Unknown')}")
+                                st.write(f"  - Period: {data.get('period_type', 'Unknown')}")
+                                st.write(f"  - Form: {data.get('form', 'Unknown')}")
+                                st.write("---")
+                else:
+                    st.error(f"❌ {result['status']}: {result.get('error', 'Unknown error')}")
+            else:
+                st.warning(f"Ticker {test_ticker.upper()} not found in SEC database")
+        
+        st.markdown("---")
+        
         st.header("📁 Data Input")
         
         # File upload
@@ -413,7 +642,23 @@ def main():
         # Analysis options
         st.header("⚙️ Analysis Options")
         analyze_all = st.checkbox("Analyze all momentum stocks", value=False)
-        max_companies = st.slider("Max companies to analyze", 1, 20, 5)
+        
+        # Dynamic max companies based on available momentum stocks
+        if uploaded_file is not None:
+            try:
+                temp_df = pd.read_csv(uploaded_file)
+                uploaded_file.seek(0)  # Reset file pointer for later reading
+                if 'Momentum Filter ✓' in temp_df.columns:
+                    momentum_count = len(temp_df[temp_df['Momentum Filter ✓'] == True])
+                    max_limit = momentum_count if analyze_all and momentum_count > 0 else min(20, momentum_count) if momentum_count > 0 else 20
+                    default_val = momentum_count if analyze_all else min(5, momentum_count) if momentum_count > 0 else 5
+                    max_companies = st.slider("Max companies to analyze", 1, max(max_limit, 1), default_val)
+                else:
+                    max_companies = st.slider("Max companies to analyze", 1, 20, 5)
+            except:
+                max_companies = st.slider("Max companies to analyze", 1, 20, 5)
+        else:
+            max_companies = st.slider("Max companies to analyze", 1, 20, 5)
         
         # SEC API Options
         st.header("🔍 Analysis Depth")
@@ -429,10 +674,28 @@ def main():
     # Main content area
     if uploaded_file is not None:
         # Load and display CSV data
-        df = pd.read_csv(uploaded_file)
+        # Reset file pointer in case it was read in sidebar
+        try:
+            uploaded_file.seek(0)
+        except:
+            pass  # Some file types don't support seek
+            
+        try:
+            df = pd.read_csv(uploaded_file)
+            
+            if df.empty or len(df.columns) == 0:
+                st.error("❌ The uploaded CSV file is empty. Please upload a valid CSV file with data.")
+                return
+                
+        except pd.errors.EmptyDataError:
+            st.error("❌ The uploaded CSV file is empty or has no columns. Please upload a valid CSV file.")
+            return
+        except Exception as e:
+            st.error(f"❌ Error reading CSV file: {e}")
+            return
         
         st.subheader("📋 Uploaded Data Preview")
-        st.dataframe(df.head(10), use_container_width=True)
+        st.dataframe(df.head(10), width='stretch')
         
         # Filter for momentum stocks
         if 'Momentum Filter ✓' in df.columns:
@@ -453,7 +716,7 @@ def main():
                 with col3:
                     st.dataframe(
                         momentum_stocks[['Ticker', '1Y Performance %', 'Momentum Filter ✓']].head(5),
-                        use_container_width=True,
+                        width='stretch',
                         hide_index=True
                     )
                 
@@ -532,10 +795,30 @@ def main():
                                                 with metric_col1:
                                                     st.write(f"💰 **Revenue:** {details.get('revenue', 'N/A')}")
                                                     st.write(f"💵 **Cash:** {details.get('cash', 'N/A')}")
+                                                    if 'cash_debt_ratio' in details:
+                                                        st.write(f"📊 **Cash/Debt Ratio:** {details.get('cash_debt_ratio', 'N/A')}")
                                                 
                                                 with metric_col2:
-                                                    st.write(f"📊 **Net Income:** {details.get('net_income', 'N/A')}")
+                                                    st.write(f"📈 **Net Income:** {details.get('net_income', 'N/A')}")
                                                     st.write(f"💳 **Debt:** {details.get('debt', 'N/A')}")
+                                                
+                                                # Add debugging information for period tracking
+                                                if 'key_metrics' in result and result['key_metrics']:
+                                                    with st.expander("🔍 Data Sources & Periods (Debug)", expanded=False):
+                                                        debug_data = []
+                                                        for metric_name, metric_data in result['key_metrics'].items():
+                                                            debug_data.append({
+                                                                'Metric': metric_name,
+                                                                'Value': f"${metric_data.get('value', 0):,.0f}" if metric_data.get('value') else 'N/A',
+                                                                'Period': metric_data.get('period_type', 'Unknown'),
+                                                                'Date': metric_data.get('date', 'Unknown'),
+                                                                'Form': metric_data.get('form', 'Unknown'),
+                                                                'XBRL Concept': metric_data.get('concept', 'Unknown')
+                                                            })
+                                                        
+                                                        if debug_data:
+                                                            debug_df = pd.DataFrame(debug_data)
+                                                            st.dataframe(debug_df, hide_index=True, width='stretch')
                                         
                                         with col2:
                                             # Status indicators
@@ -552,17 +835,83 @@ def main():
                                                 cash_icon = "🟢"
                                             elif cash_pos == 'Adequate':
                                                 cash_icon = "🟡"
-                                            elif cash_pos == 'Concerning':
-                                                cash_icon = "�"
+                                            elif 'Concerning' in cash_pos:
+                                                cash_icon = "🔴"
+                                            elif 'Excellent' in cash_pos:
+                                                cash_icon = "💚"
                                             else:
                                                 cash_icon = "⚪"
                                             
                                             st.write(f"{cash_icon} Cash Position: {cash_pos}")
                                         
+                                        # Quarterly Trend Analysis
+                                        if result.get('quarterly_trends'):
+                                            st.markdown("---")
+                                            with st.expander("📈 Quarterly Financial Trends (Last 3 Quarters)", expanded=False):
+                                                trends = result['quarterly_trends']
+                                                
+                                                # Create chart data - ensure all arrays match periods length
+                                                num_periods = len(trends['periods'])
+                                                
+                                                # Pad or truncate arrays to match periods length
+                                                revenues = trends['revenues'][:num_periods] if trends['revenues'] else []
+                                                revenues = revenues + [0] * (num_periods - len(revenues))  # Pad if needed
+                                                
+                                                costs = trends['costs'][:num_periods] if trends['costs'] else []
+                                                costs = costs + [0] * (num_periods - len(costs))
+                                                
+                                                net_income = trends['net_income'][:num_periods] if trends['net_income'] else []
+                                                net_income = net_income + [0] * (num_periods - len(net_income))
+                                                
+                                                chart_data = pd.DataFrame({
+                                                    'Period': trends['periods'],
+                                                    'Revenue': revenues,
+                                                    'Costs': costs,
+                                                    'Net Income': net_income
+                                                })
+                                                
+                                                # Convert to millions for readability
+                                                for col in ['Revenue', 'Costs', 'Net Income']:
+                                                    if col in chart_data.columns:
+                                                        chart_data[f'{col} ($M)'] = chart_data[col] / 1_000_000
+                                                
+                                                # Display bar chart
+                                                st.write("**Financial Performance Trend (in millions):**")
+                                                chart_df = chart_data[['Period', 'Revenue ($M)', 'Costs ($M)', 'Net Income ($M)']].set_index('Period')
+                                                st.bar_chart(chart_df)
+                                                
+                                                # Calculate and display trends
+                                                if len(trends['revenues']) >= 2:
+                                                    rev_growth = ((trends['revenues'][-1] - trends['revenues'][0]) / trends['revenues'][0] * 100) if trends['revenues'][0] != 0 else 0
+                                                    cost_growth = ((trends['costs'][-1] - trends['costs'][0]) / trends['costs'][0] * 100) if trends['costs'] and trends['costs'][0] != 0 else 0
+                                                    income_growth = ((trends['net_income'][-1] - trends['net_income'][0]) / trends['net_income'][0] * 100) if trends['net_income'] and trends['net_income'][0] != 0 else 0
+                                                    
+                                                    trend_col1, trend_col2, trend_col3 = st.columns(3)
+                                                    with trend_col1:
+                                                        st.metric("Revenue Growth", f"{rev_growth:+.1f}%", 
+                                                                 delta=f"${(trends['revenues'][-1] - trends['revenues'][0])/1_000_000:.1f}M")
+                                                    with trend_col2:
+                                                        if trends['costs']:
+                                                            st.metric("Cost Growth", f"{cost_growth:+.1f}%",
+                                                                     delta=f"${(trends['costs'][-1] - trends['costs'][0])/1_000_000:.1f}M")
+                                                    with trend_col3:
+                                                        if trends['net_income']:
+                                                            st.metric("Profit Growth", f"{income_growth:+.1f}%",
+                                                                     delta=f"${(trends['net_income'][-1] - trends['net_income'][0])/1_000_000:.1f}M")
+                                                    
+                                                    # Analysis insights
+                                                    if trends['revenues'] and trends['costs'] and rev_growth > 0:
+                                                        if rev_growth > cost_growth:
+                                                            st.success("✅ **Positive Trend**: Revenue growing faster than costs - improving margins")
+                                                        elif cost_growth > rev_growth:
+                                                            st.warning("⚠️ **Watch**: Costs growing faster than revenue - margin compression")
+                                                        else:
+                                                            st.info("ℹ️ **Stable**: Revenue and costs growing at similar rates")
+                                        
                                         if include_filings and result.get('recent_filings'):
                                             st.write("**Recent SEC Filings:**")
                                             filings_df = pd.DataFrame(result['recent_filings'])
-                                            st.dataframe(filings_df, hide_index=True, use_container_width=True)
+                                            st.dataframe(filings_df, hide_index=True, width='stretch')
                                 
                                 # Export functionality
                                 st.subheader("📥 Export Results")
@@ -599,7 +948,7 @@ def main():
                                     {'Ticker': r['ticker'], 'Status': r['status'], 'Error': r.get('error', 'Unknown error')}
                                     for r in failed_results
                                 ])
-                                st.dataframe(failed_df, hide_index=True, use_container_width=True)
+                                st.dataframe(failed_df, hide_index=True, width='stretch')
                     
                     # Reset analysis flag
                     st.session_state['start_analysis'] = False
@@ -642,7 +991,7 @@ def main():
             st.dataframe(
                 sample_companies[['ticker', 'title']].rename(columns={'ticker': 'Ticker', 'title': 'Company Name'}),
                 hide_index=True,
-                use_container_width=True
+                width='stretch'
             )
 
 if __name__ == "__main__":

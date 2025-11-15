@@ -59,7 +59,9 @@ if one_year_change is not None and five_year_change is not None:
 
 ### SEC Financial Analysis (financials.py)
 - **Financial Health Indicators**: Revenue generating, profitable, strong cash position
-- **XBRL Parsing**: Extract from `us-gaap` taxonomy, prefer 10-K annual data
+- **XBRL Parsing**: Extract from `us-gaap` taxonomy
+- **Period Selection**: Prioritizes most recent data by date - compares quarterly vs annual and selects whichever is newer
+- **Point-in-Time vs Period Data**: Distinguishes balance sheet (Cash, Debt as of date) from income statement (Revenue, Net Income for period)
 - **Fallback Strategy**: Manual ticker entry when SEC database fails
 
 ## Development Workflows
