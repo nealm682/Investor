@@ -3,6 +3,7 @@ import pandas as pd
 import requests
 import time
 import json
+from datetime import datetime
 from datetime import datetime, timedelta
 import re
 import io
@@ -16,9 +17,12 @@ st.set_page_config(
 
 # SEC API Configuration
 SEC_BASE_URL = "https://data.sec.gov"
-HEADERS = {
-    'User-Agent': 'InvestmentAnalyzer/1.0 (github.com/nealm682/Investor)',
-    'Accept': 'application/json'
+SEC_HEADERS = {
+    'User-Agent': 'Individual Investor-Tools/1.0 (nealm682@gmail.com)',
+    'Accept': 'application/json',
+    'Accept-Encoding': 'gzip, deflate',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Connection': 'keep-alive'
 }
 
 # Rate limiting for SEC API (10 requests per second max)
@@ -28,25 +32,69 @@ last_request_time = 0
 def load_company_tickers():
     """Load company ticker to CIK mapping from SEC"""
     try:
+        st.info("🔄 Loading SEC company database...")
+        rate_limit()
+        
+        # Use the correct SEC endpoint with proper headers
         url = "https://www.sec.gov/files/company_tickers.json"
-        response = requests.get(url, headers=HEADERS)
+        response = requests.get(url, headers=SEC_HEADERS, timeout=30)
+        
+        if response.status_code == 200:
+            tickers_data = response.json()
+            
+            # Convert to DataFrame for easier lookup
+            ticker_list = []
+            for key, company in tickers_data.items():
+                ticker_list.append({
+                    'ticker': str(company['ticker']).upper(),
+                    'cik': str(company['cik_str']).zfill(10),  # Pad CIK to 10 digits
+                    'title': company['title']
+                })
+                
+            if ticker_list:
+                df = pd.DataFrame(ticker_list)
+                st.success(f"✅ Loaded {len(df):,} companies from SEC database")
+                return df
+        
+        # If we get here, there was an error
+        if response.status_code == 403:
+            st.error("❌ SEC API access denied. This may be due to rate limiting or blocked access.")
+            st.info("""
+            **Troubleshooting Steps:**
+            1. Check your internet connection
+            2. Wait a few minutes and try again (rate limiting)
+            3. Ensure you're not behind a corporate firewall blocking SEC.gov
+            4. Try running from a different network if the issue persists
+            """)
+        else:
+            st.error(f"SEC API returned error: {response.status_code}")
+            
         response.raise_for_status()
         
-        tickers_data = response.json()
-        
-        # Convert to DataFrame for easier lookup
-        ticker_list = []
-        for key, company in tickers_data.items():
-            ticker_list.append({
-                'ticker': company['ticker'],
-                'cik': company['cik_str'],
-                'title': company['title']
-            })
-        
-        return pd.DataFrame(ticker_list)
+    except requests.exceptions.RequestException as e:
+        st.error(f"Network error loading SEC ticker database: {e}")
+        st.info("Please check your internet connection and try again.")
     except Exception as e:
-        st.error(f"Error loading company tickers: {e}")
-        return pd.DataFrame()
+        st.error(f"Error loading SEC ticker database: {e}")
+    
+    # Fallback information for manual entry
+    st.warning("⚠️ Could not load SEC ticker database automatically.")
+    st.info("""
+    **Manual Workaround Options:**
+    
+    **Wait and retry**: SEC may have temporary restrictions
+    
+    **Common Tickers for Testing:**
+    - AAPL: CIK 0000320193 (Apple)
+    - MSFT: CIK 0000789019 (Microsoft) 
+    - TSLA: CIK 0001318605 (Tesla)
+    - GOOGL: CIK 0001652044 (Alphabet/Google)
+    - AMZN: CIK 0001018724 (Amazon)
+    
+    **Check connectivity**: Ensure you're not behind a corporate firewall blocking SEC.gov
+    """)
+    
+    return pd.DataFrame()
 
 def rate_limit():
     """Enforce SEC API rate limiting"""
@@ -78,11 +126,17 @@ def get_company_submissions(cik):
     url = f"{SEC_BASE_URL}/submissions/CIK{cik:010d}.json"
     
     try:
-        response = requests.get(url, headers=HEADERS)
+        response = requests.get(url, headers=SEC_HEADERS, timeout=30)
         response.raise_for_status()
         return response.json()
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 403:
+            st.warning(f"SEC API access denied for CIK {cik}. Possible rate limiting.")
+        else:
+            st.error(f"HTTP Error fetching submissions for CIK {cik}: {e}")
+        return None
     except requests.exceptions.RequestException as e:
-        st.error(f"Error fetching submissions for CIK {cik}: {e}")
+        st.error(f"Network error fetching submissions for CIK {cik}: {e}")
         return None
 
 def get_company_facts(cik):
@@ -94,11 +148,17 @@ def get_company_facts(cik):
     url = f"{SEC_BASE_URL}/api/xbrl/companyfacts/CIK{cik:010d}.json"
     
     try:
-        response = requests.get(url, headers=HEADERS)
+        response = requests.get(url, headers=SEC_HEADERS, timeout=30)
         response.raise_for_status()
         return response.json()
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 403:
+            st.warning(f"SEC API access denied for company facts CIK {cik}. Possible rate limiting.")
+        else:
+            st.error(f"HTTP Error fetching company facts for CIK {cik}: {e}")
+        return None
     except requests.exceptions.RequestException as e:
-        st.error(f"Error fetching company facts for CIK {cik}: {e}")
+        st.error(f"Network error fetching company facts for CIK {cik}: {e}")
         return None
 
 def find_recent_filings(submissions_data, form_types=['10-K', '10-Q']):
@@ -123,7 +183,7 @@ def find_recent_filings(submissions_data, form_types=['10-K', '10-Q']):
     filings.sort(key=lambda x: x['filingDate'], reverse=True)
     return filings[:5]  # Return top 5 most recent
 
-def extract_key_financials(facts_data):
+def  extract_key_financials(facts_data):
     """Extract key financial metrics from company facts"""
     if not facts_data or 'facts' not in facts_data:
         return {}
@@ -300,7 +360,40 @@ def main():
         ticker_df = load_company_tickers()
     
     if ticker_df.empty:
-        st.error("⚠️ Could not load SEC ticker database. Please check your internet connection and try again.")
+        st.error("⚠️ Could not load SEC ticker database. The tool can still work with manual ticker entry.")
+        
+        # Show manual entry option when database fails to load
+        with st.expander("🔧 Manual Ticker Entry (Alternative)", expanded=True):
+            st.markdown("""
+            **You can still analyze specific companies by entering ticker and CIK manually:**
+            
+            1. Find the company's CIK at [SEC Company Search](https://www.sec.gov/edgar/searchedgar/companysearch.html)
+            2. Use the format: TICKER,CIK (e.g., AAPL,0000320193)
+            3. Upload a CSV with these columns: Ticker, CIK, Company Name
+            """)
+            
+            # Sample data for testing
+            sample_data = pd.DataFrame([
+                {'Ticker': 'AAPL', 'CIK': '0000320193', 'Company Name': 'Apple Inc'},
+                {'Ticker': 'MSFT', 'CIK': '0000789019', 'Company Name': 'Microsoft Corporation'},
+                {'Ticker': 'TSLA', 'CIK': '0001318605', 'Company Name': 'Tesla Inc'},
+                {'Ticker': 'GOOGL', 'CIK': '0001652044', 'Company Name': 'Alphabet Inc'},
+                {'Ticker': 'AMZN', 'CIK': '0001018724', 'Company Name': 'Amazon.com Inc'}
+            ])
+            
+            st.markdown("**Sample companies you can use for testing:**")
+            st.dataframe(sample_data, hide_index=True)
+            
+            # Download sample CSV
+            csv_sample = sample_data.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Sample CSV",
+                data=csv_sample,
+                file_name="sample_tickers_with_cik.csv",
+                mime="text/csv",
+                help="Use this as a template for manual ticker entry"
+            )
+        
         return
     
     st.success(f"✅ Loaded {len(ticker_df):,} companies from SEC database")
@@ -316,6 +409,7 @@ def main():
             help="Upload your CSV file with ticker data and momentum filter column"
         )
         
+   
         # Analysis options
         st.header("⚙️ Analysis Options")
         analyze_all = st.checkbox("Analyze all momentum stocks", value=False)
