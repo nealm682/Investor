@@ -7,6 +7,7 @@ from datetime import datetime
 from datetime import datetime, timedelta
 import re
 import io
+import os
 
 # Configure Streamlit page
 st.set_page_config(
@@ -16,9 +17,12 @@ st.set_page_config(
 )
 
 # SEC API Configuration
+# NOTE: SEC requires a User-Agent with contact information
+# Set SEC_USER_EMAIL in your .env file (see .env.example)
+SEC_USER_EMAIL = os.getenv('SEC_USER_EMAIL', 'your-email@domain.com')
 SEC_BASE_URL = "https://data.sec.gov"
 SEC_HEADERS = {
-    'User-Agent': 'Individual Investor-Tools/1.0 (nealm682@gmail.com)',
+    'User-Agent': f'Individual Investor-Tools/1.0 ({SEC_USER_EMAIL})',
     'Accept': 'application/json',
     'Accept-Encoding': 'gzip, deflate',
     'Accept-Language': 'en-US,en;q=0.9',
