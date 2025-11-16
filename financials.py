@@ -199,16 +199,19 @@ def extract_quarterly_trends(facts_data):
     }
     
     # Revenue concepts
-    revenue_concepts = ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'SalesRevenueNet']
+    revenue_concepts = ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'SalesRevenueNet', 'RevenueFromContractWithCustomerIncludingAssessedTax']
     # Cost concepts
     cost_concepts = ['CostOfRevenue', 'CostOfGoodsAndServicesSold', 'OperatingExpenses']
     # Net income concepts
     income_concepts = ['NetIncomeLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic']
     
-    # Extract quarterly data for each metric
+    # Extract quarterly data for each metric - check ALL concepts and pick most recent
     for concept_list, data_key in [(revenue_concepts, 'revenues'), 
                                      (cost_concepts, 'costs'), 
                                      (income_concepts, 'net_income')]:
+        best_quarterly_values = []
+        best_date = ''
+        
         for concept in concept_list:
             if concept in us_gaap:
                 units = us_gaap[concept].get('units', {})
@@ -228,20 +231,27 @@ def extract_quarterly_trends(facts_data):
                             except:
                                 pass
                     
-                    # Sort by end date and get 3 most recent
+                    # Sort by end date (most recent first)
                     quarterly_values.sort(key=lambda x: x.get('end', ''), reverse=True)
                     
-                    if len(quarterly_values) >= 3 and not trends['periods']:
-                        # Store periods (only once)
-                        trends['periods'] = [v.get('end') for v in quarterly_values[:3]]
-                        trends['periods'].reverse()  # Oldest to newest for chart
-                    
-                    if quarterly_values:
-                        # Store values
-                        trend_data = [v.get('val', 0) for v in quarterly_values[:3]]
-                        trend_data.reverse()  # Oldest to newest
-                        trends[data_key] = trend_data
-                        break  # Found data for this metric
+                    # Check if this concept has more recent data than what we've found so far
+                    if quarterly_values and len(quarterly_values) >= 3:
+                        most_recent_date = quarterly_values[0].get('end', '')
+                        if most_recent_date > best_date:
+                            best_date = most_recent_date
+                            best_quarterly_values = quarterly_values
+        
+        # Use the best (most recent) quarterly values found across all concepts
+        if best_quarterly_values:
+            if len(best_quarterly_values) >= 3 and not trends['periods']:
+                # Store periods (only once, from the first metric with data)
+                trends['periods'] = [v.get('end') for v in best_quarterly_values[:3]]
+                trends['periods'].reverse()  # Oldest to newest for chart
+            
+            # Store values for this metric
+            trend_data = [v.get('val', 0) for v in best_quarterly_values[:3]]
+            trend_data.reverse()  # Oldest to newest
+            trends[data_key] = trend_data
     
     # Only return if we have at least revenue data and 3 periods
     if len(trends['periods']) >= 3 and trends['revenues']:
