@@ -59,9 +59,12 @@ if one_year_change is not None and five_year_change is not None:
 
 ### SEC Financial Analysis (financials.py)
 - **Financial Health Indicators**: Revenue generating, profitable, strong cash position
-- **XBRL Parsing**: Extract from `us-gaap` taxonomy
+- **XBRL Parsing**: Extract from `us-gaap` taxonomy with multiple concept fallbacks
 - **Period Selection**: Prioritizes most recent data by date - compares quarterly vs annual and selects whichever is newer
 - **Point-in-Time vs Period Data**: Distinguishes balance sheet (Cash, Debt as of date) from income statement (Revenue, Net Income for period)
+- **Critical XBRL Pattern**: MUST check ALL concept variations for each metric and select most recent by date (never break after first concept)
+- **Period Classification**: STRICT day-count only (60-120 days = Quarterly, 300+ = Annual) - never rely on form types (10-Q can contain 9-month cumulative)
+- **Debt vs Liabilities**: Traditional debt (borrowings) ≠ Operating leases or deferred revenue - use specific debt concepts only
 - **Fallback Strategy**: Manual ticker entry when SEC database fails
 
 ## Development Workflows
@@ -129,6 +132,83 @@ pip install -r requirements.txt
 - **SEC Data Gaps**: Not all companies report standardized XBRL data
 - **Date Validation**: Business days only for earnings calendar meaningful results
 
+### XBRL Data Accuracy (CRITICAL PATTERNS)
+
+#### Bug Pattern: Old Data Selection
+**Problem**: Companies showing data from 2018-2022 instead of current 2025 quarters
+**Root Cause**: Code breaks after first matching XBRL concept, which may contain outdated data
+**Example**: MP Materials showed 2022-06-30 revenue instead of 2025-09-30, LEU showed 2018 quarterly data
+**Solution**: Check ALL concept variations, compare end dates, select most recent
+```python
+# WRONG - Stops at first concept
+for concept in concept_list:
+    if concept in us_gaap:
+        # Extract data
+        break  # ❌ BUG: May have old data
+
+# CORRECT - Checks all concepts
+best_date = ''
+best_metric = None
+for concept in concept_list:
+    if concept in us_gaap:
+        # Extract data and get end date
+        if candidate_date > best_date:
+            best_date = candidate_date
+            best_metric = data
+# Use best_metric after checking all
+```
+
+#### Bug Pattern: Period Misclassification
+**Problem**: 9-month cumulative revenue ($986M) displayed as quarterly revenue instead of single quarter ($376M)
+**Root Cause**: Using form type (10-Q) to classify periods, but 10-Q can contain year-to-date cumulative data
+**Example**: SOFI Q3 showing 9-month cumulative instead of 3-month quarter
+**Solution**: Calculate period length from start/end dates, use strict day ranges
+```python
+# WRONG - Form-based classification
+if '10-Q' in form or (60 <= period_days <= 120):
+    quarterly_values.append(v)  # ❌ BUG: Includes 9-month periods
+
+# CORRECT - Strict day-count only
+if 60 <= period_days <= 120:  # Single quarter only
+    quarterly_values.append(v)
+elif period_days >= 300:  # Annual only
+    annual_values.append(v)
+```
+
+#### Bug Pattern: Debt vs Liabilities Confusion
+**Problem**: Companies showing $1.4B debt when they have $0 traditional borrowings
+**Root Cause**: Including 'Liabilities' as fallback in debt concepts captures operating leases, deferred revenue
+**Example**: PLTR showing total liabilities as debt instead of $0 (debt-free company)
+**Solution**: Use specific debt concepts only, handle $0 debt explicitly
+```python
+# WRONG - Includes all liabilities
+'TotalDebt': ['DebtAndCapitalLeaseObligations', 'Liabilities']  # ❌ Too broad
+
+# CORRECT - Specific debt concepts
+'TotalDebt': ['DebtAndCapitalLeaseObligations', 
+              'DebtLongtermAndShorttermCombinedAmount', 
+              'LongTermDebt']  # ✅ Traditional borrowings only
+
+# Handle debt-free companies
+if no_debt_found:
+    return "$0 (No traditional debt reported)"
+```
+
+#### Bug Pattern: File Pointer Exhaustion
+**Problem**: CSV upload fails with "empty or has no columns" error
+**Root Cause**: Reading uploaded file twice (sidebar dynamic slider + main area) exhausts file pointer
+**Solution**: Add `uploaded_file.seek(0)` after each read to reset pointer
+
+#### Validated Companies (Real-World Testing)
+- **SOFI**: Fixed 9-month vs quarterly classification (Q3 $376M not 9-month $986M)
+- **MP Materials**: Fixed old data selection (2025-09-30 not 2022-06-30)
+- **PLTR**: Fixed debt classification ($0 debt, not $1.4B liabilities)
+- **LEU**: Fixed quarterly trends date selection (2025 quarters not 2018)
+- **ASTR**: Currently under audit - investigating conflicting debt values ($334M vs $183M)
+- **XBRL Concept Variations**: Same financial metric has multiple XBRL concept names (e.g., Revenue = 'Revenues' OR 'RevenueFromContractWithCustomerExcludingAssessedTax' OR 'SalesRevenueNet' OR 'RevenueFromContractWithCustomerIncludingAssessedTax')
+- **Old Data Trap**: First matching XBRL concept may contain old data (2018) while later concepts have current data (2025) - MUST check all concepts and compare dates
+- **Period Misclassification**: 10-Q forms can contain 9-month cumulative data, not just quarterly - use period length (days between start/end), never form type alone
+
 ## Code Style Conventions
 
 ### Error Handling Pattern
@@ -156,4 +236,95 @@ for i, item in enumerate(items):
     progress_bar.progress((i + 1) / len(items))
 progress_bar.empty()
 status_text.empty()
+```
+
+### XBRL Data Extraction Pattern (CRITICAL)
+```python
+def extract_financial_metric(us_gaap, concept_list, metric_type='period'):
+    """
+    Extract financial metric from XBRL data - MUST check ALL concepts
+    
+    Args:
+        us_gaap: us-gaap taxonomy dictionary
+        concept_list: List of XBRL concept names to check (e.g., ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax'])
+        metric_type: 'period' for income statement (Revenue, Net Income) or 'point-in-time' for balance sheet (Cash, Debt)
+    
+    Returns:
+        Dictionary with value, date, period info, or None
+    """
+    best_metric = None
+    best_date = ''
+    
+    # CRITICAL: Check ALL concepts, never break early
+    for concept in concept_list:
+        if concept not in us_gaap:
+            continue
+            
+        units = us_gaap[concept].get('units', {})
+        if 'USD' not in units:
+            continue
+            
+        values = units['USD']
+        valid_values = [v for v in values if v.get('val') is not None and v.get('end')]
+        
+        if not valid_values:
+            continue
+            
+        # Sort by end date (most recent first)
+        valid_values.sort(key=lambda x: x.get('end', ''), reverse=True)
+        
+        if metric_type == 'point-in-time':
+            # Balance sheet items - use most recent point
+            candidate = valid_values[0]
+            candidate_date = candidate.get('end', '')
+            
+        else:  # metric_type == 'period'
+            # Income statement items - classify by period length
+            quarterly_values = []
+            annual_values = []
+            
+            for v in valid_values:
+                start_date = v.get('start', '')
+                end_date = v.get('end', '')
+                
+                if start_date and end_date:
+                    from datetime import datetime
+                    start = datetime.strptime(start_date, '%Y-%m-%d')
+                    end = datetime.strptime(end_date, '%Y-%m-%d')
+                    period_days = (end - start).days
+                    
+                    # STRICT classification - no form type checks
+                    if 60 <= period_days <= 120:
+                        quarterly_values.append(v)
+                    elif period_days >= 300:
+                        annual_values.append(v)
+            
+            quarterly_values.sort(key=lambda x: x.get('end', ''), reverse=True)
+            annual_values.sort(key=lambda x: x.get('end', ''), reverse=True)
+            
+            # Use most recent by date (quarterly or annual)
+            candidate = None
+            if quarterly_values and annual_values:
+                candidate = quarterly_values[0] if quarterly_values[0]['end'] > annual_values[0]['end'] else annual_values[0]
+            elif quarterly_values:
+                candidate = quarterly_values[0]
+            elif annual_values:
+                candidate = annual_values[0]
+            else:
+                continue
+            
+            candidate_date = candidate.get('end', '')
+        
+        # Only update if this concept has more recent data
+        if candidate_date > best_date:
+            best_date = candidate_date
+            best_metric = {
+                'value': candidate.get('val'),
+                'date': candidate.get('end'),
+                'form': candidate.get('form'),
+                'concept': concept,
+                # ... other fields
+            }
+    
+    return best_metric
 ```
