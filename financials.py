@@ -263,14 +263,18 @@ def extract_key_financials(facts_data):
         'TotalAssets': ['Assets', 'AssetsCurrent', 'AssetsNoncurrent'],
         'TotalLiabilities': ['Liabilities', 'LiabilitiesAndStockholdersEquity', 'LiabilitiesCurrent'],
         'Cash': ['CashAndCashEquivalentsAtCarryingValue', 'Cash', 'CashCashEquivalentsAndShortTermInvestments', 'CashAndCashEquivalentsFairValueDisclosure'],
-        'Debt': ['LongTermDebt', 'DebtCurrent', 'DebtAndCapitalLeaseObligations', 'ShortTermBorrowings', 'LongTermDebtCurrent', 'LongTermDebtNoncurrent'],
-        'TotalDebt': ['DebtAndCapitalLeaseObligations', 'LongTermDebt', 'Liabilities']  # Fallback to total liabilities if no specific debt
+        'Debt': ['LongTermDebt', 'LongTermDebtCurrent', 'LongTermDebtNoncurrent', 'LongTermDebtAndCapitalLeaseObligations', 'DebtCurrent', 'ShortTermBorrowings'],
+        'TotalDebt': ['DebtAndCapitalLeaseObligations', 'DebtLongtermAndShorttermCombinedAmount', 'LongTermDebt']  # Removed Liabilities fallback
     }
     
     # Look in us-gaap taxonomy
     us_gaap = facts.get('us-gaap', {})
     
     for metric_name, concept_list in concepts_to_find.items():
+        best_metric = None
+        best_date = ''
+        
+        # Check ALL concepts for this metric and find the one with most recent data
         for concept in concept_list:
             if concept in us_gaap:
                 units = us_gaap[concept].get('units', {})
@@ -289,14 +293,19 @@ def extract_key_financials(facts_data):
                         if metric_name in ['Cash', 'Debt', 'TotalDebt', 'TotalAssets', 'TotalLiabilities']:
                             # Get the most recent point-in-time value
                             most_recent = valid_values[0]
-                            key_metrics[metric_name] = {
-                                'value': most_recent.get('val'),
-                                'date': most_recent.get('end'),
-                                'form': most_recent.get('form'),
-                                'filed': most_recent.get('filed'),
-                                'period_type': 'Point-in-Time',
-                                'concept': concept
-                            }
+                            candidate_date = most_recent.get('end', '')
+                            
+                            # Only update if this concept has more recent data
+                            if candidate_date > best_date:
+                                best_date = candidate_date
+                                best_metric = {
+                                    'value': most_recent.get('val'),
+                                    'date': most_recent.get('end'),
+                                    'form': most_recent.get('form'),
+                                    'filed': most_recent.get('filed'),
+                                    'period_type': 'Point-in-Time',
+                                    'concept': concept
+                                }
                         else:
                             # For period data (Revenues, NetIncome), get most recent period regardless of type
                             # Sort all valid values by end date to get the absolute most recent
@@ -325,6 +334,10 @@ def extract_key_financials(facts_data):
                                 elif 60 <= period_days <= 120:  # Quarterly = 60-120 days only (single quarter)
                                     quarterly_values.append(v)
                             
+                            # Sort both arrays by end date (most recent first)
+                            annual_values.sort(key=lambda x: x.get('end', ''), reverse=True)
+                            quarterly_values.sort(key=lambda x: x.get('end', ''), reverse=True)
+                            
                             # PRIORITY: Use the most recent data by date, whether annual or quarterly
                             # Compare dates if we have both types
                             selected_value = None
@@ -352,17 +365,24 @@ def extract_key_financials(facts_data):
                                 period_type = 'Unknown Period'
                             
                             if selected_value:
-                                key_metrics[metric_name] = {
-                                    'value': selected_value.get('val'),
-                                    'date': selected_value.get('end'),
-                                    'form': selected_value.get('form'),
-                                    'filed': selected_value.get('filed'),
-                                    'period_type': period_type,
-                                    'start_date': selected_value.get('start'),
-                                    'concept': concept
-                                }
-                        
-                        break  # Found data for this metric, move to next
+                                candidate_date = selected_value.get('end', '')
+                                
+                                # Only update if this concept has more recent data
+                                if candidate_date > best_date:
+                                    best_date = candidate_date
+                                    best_metric = {
+                                        'value': selected_value.get('val'),
+                                        'date': selected_value.get('end'),
+                                        'form': selected_value.get('form'),
+                                        'filed': selected_value.get('filed'),
+                                        'period_type': period_type,
+                                        'start_date': selected_value.get('start'),
+                                        'concept': concept
+                                    }
+        
+        # After checking all concepts for this metric, save the best one found
+        if best_metric:
+            key_metrics[metric_name] = best_metric
     
     return key_metrics
 
@@ -433,14 +453,17 @@ def analyze_financial_health(metrics):
         debt_data = metrics['Debt']
         analysis['periods']['debt'] = f"As of {debt_data.get('date', 'Unknown')}"
         period_info = f" (As of {debt_data.get('date', 'Unknown')})"
-        analysis['details']['debt'] = f"${debt:,.0f}{period_info}" if debt else f"Debt data not available"
+        analysis['details']['debt'] = f"${debt:,.0f}{period_info}"
     elif 'TotalDebt' in metrics:
         debt_data = metrics['TotalDebt']
         analysis['periods']['debt'] = f"As of {debt_data.get('date', 'Unknown')}"
         period_info = f" (As of {debt_data.get('date', 'Unknown')})"
-        analysis['details']['debt'] = f"${total_debt:,.0f} ({debt_label}){period_info}" if total_debt else f"Debt data not available"
+        analysis['details']['debt'] = f"${total_debt:,.0f} ({debt_label}){period_info}"
     else:
-        analysis['details']['debt'] = "Debt data not available"
+        # If no debt metrics found, company likely has no debt
+        analysis['details']['debt'] = "$0 (No traditional debt reported)"
+        if 'Cash' in metrics:
+            analysis['periods']['debt'] = f"As of {metrics['Cash'].get('date', 'Unknown')}"
     
     # Cash position analysis using effective debt
     if cash > 0 and effective_debt > 0:
