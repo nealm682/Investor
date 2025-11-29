@@ -586,6 +586,122 @@ def calculate_pe_ratio(ticker, net_income=None, shares_outstanding=None):
         #print(f"DEBUG calculate_pe_ratio ERROR for {ticker}: {str(e)}")
         return None, f"Error: {str(e)}"
 
+def get_options_sentiment_analysis(ticker):
+    """Get comprehensive options data and sentiment analysis for a ticker
+    
+    Returns:
+    - Implied Volatility (30-day)
+    - Put/Call Ratio
+    - Options Volume
+    - Open Interest
+    - Historical IV trends
+    - Unusual activity flags
+    """
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        
+        analysis = {
+            'has_options': False,
+            'implied_volatility': None,
+            'put_call_ratio': None,
+            'options_volume': None,
+            'avg_volume': None,
+            'unusual_activity': False,
+            'sentiment': 'Unknown',
+            'iv_percentile': None,
+            'options_data': None,
+            'error': None
+        }
+        
+        # Get implied volatility from info
+        iv = info.get('impliedVolatility')
+        if iv:
+            analysis['implied_volatility'] = iv * 100  # Convert to percentage
+        
+        # Try to get options chains
+        try:
+            exp_dates = stock.options
+            if exp_dates and len(exp_dates) > 0:
+                analysis['has_options'] = True
+                
+                # Get nearest expiration (usually most liquid)
+                nearest_exp = exp_dates[0]
+                opt_chain = stock.option_chain(nearest_exp)
+                
+                calls = opt_chain.calls
+                puts = opt_chain.puts
+                
+                if not calls.empty and not puts.empty:
+                    # Calculate Put/Call Ratio by volume
+                    call_volume = calls['volume'].sum()
+                    put_volume = puts['volume'].sum()
+                    
+                    if call_volume > 0:
+                        pc_ratio = put_volume / call_volume
+                        analysis['put_call_ratio'] = pc_ratio
+                        
+                        # Determine sentiment
+                        if pc_ratio > 1.5:
+                            analysis['sentiment'] = 'Very Bearish'
+                        elif pc_ratio > 1.0:
+                            analysis['sentiment'] = 'Bearish'
+                        elif pc_ratio > 0.7:
+                            analysis['sentiment'] = 'Neutral'
+                        elif pc_ratio > 0.5:
+                            analysis['sentiment'] = 'Bullish'
+                        else:
+                            analysis['sentiment'] = 'Very Bullish'
+                    
+                    # Total options volume
+                    total_volume = call_volume + put_volume
+                    analysis['options_volume'] = int(total_volume)
+                    
+                    # Calculate average IV from ATM options
+                    # Get current price
+                    current_price = info.get('currentPrice') or info.get('regularMarketPrice')
+                    if current_price:
+                        # Find ATM options (within 5% of current price)
+                        atm_calls = calls[abs(calls['strike'] - current_price) / current_price < 0.05]
+                        atm_puts = puts[abs(puts['strike'] - current_price) / current_price < 0.05]
+                        
+                        ivs = []
+                        if not atm_calls.empty and 'impliedVolatility' in atm_calls.columns:
+                            ivs.extend(atm_calls['impliedVolatility'].dropna().tolist())
+                        if not atm_puts.empty and 'impliedVolatility' in atm_puts.columns:
+                            ivs.extend(atm_puts['impliedVolatility'].dropna().tolist())
+                        
+                        if ivs:
+                            avg_iv = sum(ivs) / len(ivs) * 100
+                            analysis['implied_volatility'] = avg_iv
+                    
+                    # Store raw data for potential charting
+                    analysis['options_data'] = {
+                        'expiration': nearest_exp,
+                        'call_volume': int(call_volume),
+                        'put_volume': int(put_volume),
+                        'total_oi': int(calls['openInterest'].sum() + puts['openInterest'].sum())
+                    }
+                    
+                    # Check for unusual activity (volume > 2x average)
+                    avg_volume = info.get('averageVolume')
+                    if avg_volume and total_volume > (avg_volume * 0.5):
+                        analysis['unusual_activity'] = True
+                        analysis['avg_volume'] = avg_volume
+        
+        except Exception as opt_error:
+            # Options data not available, but we might still have IV from info
+            if not analysis['implied_volatility']:
+                analysis['error'] = f"Options data unavailable: {str(opt_error)}"
+        
+        return analysis
+        
+    except Exception as e:
+        return {
+            'has_options': False,
+            'error': f"Error fetching options data: {str(e)}"
+        }
+
 def process_ticker_analysis(ticker, ticker_df):
     """Process financial analysis for a single ticker"""
     try:
@@ -1047,6 +1163,114 @@ def main():
                                                             st.warning("⚠️ **Watch**: Costs growing faster than revenue - margin compression")
                                                         else:
                                                             st.info("ℹ️ **Stable**: Revenue and costs growing at similar rates")
+                                        
+                                        # Options & Sentiment Analysis Section
+                                        st.markdown("---")
+                                        with st.expander("📊 Options & Sentiment Analysis", expanded=False):
+                                            with st.spinner("Fetching options data..."):
+                                                options_analysis = get_options_sentiment_analysis(result['ticker'])
+                                            
+                                            if options_analysis.get('error') and not options_analysis.get('has_options'):
+                                                st.warning(f"⚠️ {options_analysis['error']}")
+                                            elif options_analysis.get('has_options'):
+                                                # Main metrics in columns
+                                                opt_col1, opt_col2, opt_col3 = st.columns(3)
+                                                
+                                                with opt_col1:
+                                                    st.write("**📈 Implied Volatility (IV)**")
+                                                    if options_analysis['implied_volatility']:
+                                                        iv_value = options_analysis['implied_volatility']
+                                                        st.metric("30-Day IV", f"{iv_value:.2f}%")
+                                                        
+                                                        # IV interpretation
+                                                        if iv_value < 20:
+                                                            st.caption("🟢 Low volatility - stable stock")
+                                                        elif iv_value < 40:
+                                                            st.caption("🟡 Moderate volatility - normal")
+                                                        elif iv_value < 60:
+                                                            st.caption("🟠 High volatility - active trading")
+                                                        else:
+                                                            st.caption("🔴 Very high volatility - caution")
+                                                    else:
+                                                        st.write("N/A")
+                                                
+                                                with opt_col2:
+                                                    st.write("**🎯 Put/Call Ratio**")
+                                                    if options_analysis['put_call_ratio'] is not None:
+                                                        pc_ratio = options_analysis['put_call_ratio']
+                                                        sentiment = options_analysis['sentiment']
+                                                        
+                                                        # Color code sentiment
+                                                        if 'Bullish' in sentiment:
+                                                            sentiment_color = "🟢"
+                                                        elif 'Bearish' in sentiment:
+                                                            sentiment_color = "🔴"
+                                                        else:
+                                                            sentiment_color = "🟡"
+                                                        
+                                                        st.metric("P/C Ratio", f"{pc_ratio:.3f}")
+                                                        st.caption(f"{sentiment_color} {sentiment}")
+                                                        
+                                                        # Explanation
+                                                        if pc_ratio > 1:
+                                                            st.caption("More puts than calls - bearish bias")
+                                                        else:
+                                                            st.caption("More calls than puts - bullish bias")
+                                                    else:
+                                                        st.write("N/A")
+                                                
+                                                with opt_col3:
+                                                    st.write("**📊 Options Activity**")
+                                                    if options_analysis['options_volume']:
+                                                        volume = options_analysis['options_volume']
+                                                        st.metric("Total Volume", f"{volume:,}")
+                                                        
+                                                        if options_analysis['unusual_activity']:
+                                                            st.caption("🔥 Unusual activity detected!")
+                                                        else:
+                                                            st.caption("Normal trading volume")
+                                                    else:
+                                                        st.write("N/A")
+                                                
+                                                # Detailed breakdown
+                                                if options_analysis.get('options_data'):
+                                                    st.markdown("---")
+                                                    st.write("**📋 Detailed Options Breakdown:**")
+                                                    
+                                                    opt_data = options_analysis['options_data']
+                                                    detail_col1, detail_col2, detail_col3, detail_col4 = st.columns(4)
+                                                    
+                                                    with detail_col1:
+                                                        st.write(f"**Expiration:** {opt_data['expiration']}")
+                                                    with detail_col2:
+                                                        st.write(f"**Call Volume:** {opt_data['call_volume']:,}")
+                                                    with detail_col3:
+                                                        st.write(f"**Put Volume:** {opt_data['put_volume']:,}")
+                                                    with detail_col4:
+                                                        st.write(f"**Total OI:** {opt_data['total_oi']:,}")
+                                                
+                                                # Combined interpretation
+                                                st.markdown("---")
+                                                st.write("**🎓 What This Means:**")
+                                                
+                                                iv = options_analysis.get('implied_volatility', 0)
+                                                pc = options_analysis.get('put_call_ratio', 0)
+                                                sentiment = options_analysis.get('sentiment', 'Unknown')
+                                                
+                                                # Generate interpretation
+                                                if iv and pc:
+                                                    if iv > 40 and pc < 0.7:
+                                                        st.info("🚀 **High volatility + Bullish sentiment**: Market expects big moves upward. Potential opportunity but risky.")
+                                                    elif iv > 40 and pc > 1.5:
+                                                        st.warning("⚠️ **High volatility + Bearish sentiment**: Market expects big moves downward. Exercise caution.")
+                                                    elif iv < 30 and pc < 0.7:
+                                                        st.success("✅ **Low volatility + Bullish sentiment**: Stable growth expected. Lower risk profile.")
+                                                    elif iv < 30 and pc > 1.5:
+                                                        st.error("🔍 **Low volatility + Bearish sentiment**: Stable but negative outlook. Investigate fundamentals.")
+                                                    else:
+                                                        st.info(f"📊 **Moderate conditions**: {sentiment} sentiment with moderate volatility.")
+                                            else:
+                                                st.info("ℹ️ Options data not available for this ticker. May be a thinly-traded stock or options not offered.")
                                         
                                         if include_filings and result.get('recent_filings'):
                                             st.write("**Recent SEC Filings:**")
