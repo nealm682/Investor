@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import re
 import io
 import os
+import yfinance as yf
 
 # Configure Streamlit page
 st.set_page_config(
@@ -515,6 +516,76 @@ def analyze_financial_health(metrics):
     
     return analysis
 
+def get_current_stock_price(ticker):
+    """Get current stock price using yfinance"""
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        price = info.get('currentPrice') or info.get('regularMarketPrice')
+        if price:
+            return f"${price:.2f}"
+        return "Price N/A"
+    except Exception as e:
+        return "Price N/A"
+
+def calculate_pe_ratio(ticker, net_income=None, shares_outstanding=None):
+    """Calculate P/E ratio using yfinance data first, then fallback to manual calculation
+    
+    Priority:
+    1. Use trailingPE from yfinance (most reliable, uses TTM earnings)
+    2. Use forwardPE from yfinance (analyst estimates)
+    3. Calculate manually: P/E = Current Price / EPS, where EPS = Net Income / Shares Outstanding
+    """
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        
+        # Try to get P/E directly from yfinance first (TTM - Trailing Twelve Months)
+        trailing_pe = info.get('trailingPE')
+        # print(f"DEBUG calculate_pe_ratio for {ticker}: trailingPE from yfinance={trailing_pe}")
+        
+        if trailing_pe and trailing_pe > 0:
+            return trailing_pe, None
+        
+        # Try forward P/E (based on estimates)
+        forward_pe = info.get('forwardPE')
+        #print(f"DEBUG calculate_pe_ratio for {ticker}: forwardPE from yfinance={forward_pe}")
+        
+        if forward_pe and forward_pe > 0:
+            return forward_pe, None
+        
+        # Fallback: Manual calculation using SEC data
+        if net_income and net_income > 0:
+            price = info.get('currentPrice') or info.get('regularMarketPrice')
+            #print(f"DEBUG calculate_pe_ratio for {ticker}: manual calc - price={price}")
+            
+            if not price:
+                return None, "Price unavailable"
+            
+            shares = shares_outstanding or info.get('sharesOutstanding')
+            #print(f"DEBUG calculate_pe_ratio for {ticker}: manual calc - shares={shares}, net_income={net_income}")
+            
+            if not shares:
+                return None, "Shares outstanding unavailable"
+            
+            # Calculate EPS
+            eps = net_income / shares
+            #print(f"DEBUG calculate_pe_ratio for {ticker}: manual calc - eps={eps}")
+            
+            pe_ratio = price / eps
+            #print(f"DEBUG calculate_pe_ratio for {ticker}: manual calc - pe_ratio={pe_ratio}")
+            return pe_ratio, None
+        
+        # If we get here, P/E is not available
+        if net_income and net_income < 0:
+            return None, "Negative earnings"
+        else:
+            return None, "N/A"
+        
+    except Exception as e:
+        #print(f"DEBUG calculate_pe_ratio ERROR for {ticker}: {str(e)}")
+        return None, f"Error: {str(e)}"
+
 def process_ticker_analysis(ticker, ticker_df):
     """Process financial analysis for a single ticker"""
     try:
@@ -817,7 +888,9 @@ def main():
                                 st.subheader("💰 Financial Health Analysis")
                                 
                                 for result in successful_results:
-                                    with st.expander(f"🏢 {result['ticker']} - {result['company_name']}", expanded=False):
+                                    # Get current stock price
+                                    current_price = get_current_stock_price(result['ticker'])
+                                    with st.expander(f"🏢 {result['ticker']} - {result['company_name']} | {current_price}", expanded=False):
                                         col1, col2 = st.columns([2, 1])
                                         
                                         with col1:
@@ -827,6 +900,35 @@ def main():
                                             if detailed_metrics and 'financial_details' in result:
                                                 st.write("**Key Metrics:**")
                                                 details = result['financial_details']
+                                                
+                                                # Calculate P/E ratio with debug info
+                                                pe_ratio = None
+                                                pe_display = "N/A"
+                                                
+                                                # Debug: Print what we have
+                                                st.write(f"🔍 DEBUG - Has key_metrics: {'key_metrics' in result}")
+                                                if 'key_metrics' in result:
+                                                    #st.write(f"🔍 DEBUG - key_metrics keys: {list(result['key_metrics'].keys())}")
+                                                    net_income_data = result['key_metrics'].get('NetIncome', {})
+                                                    #st.write(f"🔍 DEBUG - NetIncome data: {net_income_data}")
+                                                    net_income = net_income_data.get('value') if net_income_data else None
+                                                    #st.write(f"🔍 DEBUG - Net Income value: {net_income}")
+                                                    
+                                                    # Try to calculate P/E (even with negative or no net income, yfinance might have it)
+                                                    pe_ratio, error = calculate_pe_ratio(result['ticker'], net_income)
+                                                    #st.write(f"🔍 DEBUG - P/E calculation result: {pe_ratio}, Error: {error}")
+                                                    if pe_ratio:
+                                                        pe_display = f"{pe_ratio:.2f}"
+                                                    elif error:
+                                                        pe_display = error
+                                                else:
+                                                    # Even without SEC data, try yfinance
+                                                    pe_ratio, error = calculate_pe_ratio(result['ticker'])
+                                                    #st.write(f"🔍 DEBUG - P/E calculation result (no SEC data): {pe_ratio}, Error: {error}")
+                                                    if pe_ratio:
+                                                        pe_display = f"{pe_ratio:.2f}"
+                                                    elif error:
+                                                        pe_display = error
                                                 
                                                 metric_col1, metric_col2 = st.columns(2)
                                                 with metric_col1:
@@ -838,6 +940,7 @@ def main():
                                                 with metric_col2:
                                                     st.write(f"📈 **Net Income:** {details.get('net_income', 'N/A')}")
                                                     st.write(f"💳 **Debt:** {details.get('debt', 'N/A')}")
+                                                    st.write(f"📊 **P/E Ratio:** {pe_display}")
                                                 
                                                 # Add debugging information for period tracking
                                                 if 'key_metrics' in result and result['key_metrics']:

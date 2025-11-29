@@ -53,7 +53,7 @@ pip install -r requirements.txt
 
 **Open Terminal 1:**
 ```powershell
-streamlit run earnings.py
+streamlit run earnings_ui_filter.py
 ```
 Opens at: `http://localhost:8501`
 
