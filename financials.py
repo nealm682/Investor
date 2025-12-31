@@ -819,37 +819,25 @@ def main():
    
     # Sidebar for file upload and testing
     with st.sidebar:
-        st.header("🧪 Quick Testing")
+        st.header("🔍 Single Ticker Analysis")
         
         # Single ticker test
-        test_ticker = st.text_input("Test single ticker (e.g., TTMI, AAPL)", placeholder="Enter ticker symbol")
-        if st.button("🔍 Test Ticker") and test_ticker:
+        test_ticker = st.text_input("Enter ticker symbol (e.g., TTMI, AAPL)", placeholder="Enter ticker symbol")
+        
+        # Analysis options for single ticker
+        st.subheader("Analysis Options")
+        include_filings_single = st.checkbox("Include recent filings", value=True, key="single_filings")
+        detailed_metrics_single = st.checkbox("Show detailed metrics", value=True, key="single_detailed")
+        
+        analyze_single = st.button("🚀 Analyze Ticker", type="primary")
+        
+        if analyze_single and test_ticker:
             if test_ticker.upper() in ticker_df['ticker'].values:
-                st.info(f"Testing {test_ticker.upper()}...")
-                result = process_ticker_analysis(test_ticker.upper(), ticker_df)
-                
-                if result['status'] == 'Success':
-                    st.success("✅ Analysis completed!")
-                    
-                    # Show basic results
-                    st.write(f"**Company:** {result['company_name']}")
-                    st.write(f"**Revenue Generating:** {'✅' if result['revenue_generating'] else '❌'}")
-                    st.write(f"**Profitable:** {'✅' if result['profitable'] else '❌'}")
-                    st.write(f"**Cash Position:** {result['cash_position']}")
-                    
-                    # Show raw metrics for debugging
-                    if 'key_metrics' in result and result['key_metrics']:
-                        with st.expander("Debug: Raw Data", expanded=False):
-                            for metric, data in result['key_metrics'].items():
-                                st.write(f"**{metric}:** ${data.get('value', 0):,.0f}")
-                                st.write(f"  - Date: {data.get('date', 'Unknown')}")
-                                st.write(f"  - Period: {data.get('period_type', 'Unknown')}")
-                                st.write(f"  - Form: {data.get('form', 'Unknown')}")
-                                st.write("---")
-                else:
-                    st.error(f"❌ {result['status']}: {result.get('error', 'Unknown error')}")
+                st.session_state['single_ticker_result'] = test_ticker.upper()
+                st.session_state['single_ticker_analyzed'] = True
             else:
                 st.warning(f"Ticker {test_ticker.upper()} not found in SEC database")
+                st.session_state['single_ticker_analyzed'] = False
         
         st.markdown("---")
         
@@ -1320,30 +1308,334 @@ def main():
                 st.warning("No stocks found with Momentum Filter ✓ = True")
         else:
             st.error("CSV file must contain 'Momentum Filter ✓' column")
-    else:
+    # Single ticker analysis display (regardless of CSV upload)
+    if st.session_state.get('single_ticker_analyzed', False):
+        ticker_to_analyze = st.session_state.get('single_ticker_result')
+        
+        if ticker_to_analyze:
+            st.title(f"📊 Financial Analysis: {ticker_to_analyze}")
+            
+            with st.spinner(f"🔄 Analyzing {ticker_to_analyze}..."):
+                result = process_ticker_analysis(ticker_to_analyze, ticker_df)
+            
+            if result['status'] == 'Success':
+                # Get current stock price
+                current_price = get_current_stock_price(result['ticker'])
+                
+                st.header(f"🏢 {result['company_name']} | {current_price}")
+                
+                # Summary metrics row
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    revenue_icon = "✅" if result.get('revenue_generating') else "❌"
+                    st.metric("Revenue Generating", revenue_icon)
+                
+                with col2:
+                    profit_icon = "✅" if result.get('profitable') else "❌"
+                    st.metric("Profitable", profit_icon)
+                
+                with col3:
+                    cash_pos = result.get('cash_position', 'Unknown')
+                    if cash_pos == 'Strong':
+                        cash_icon = "🟢"
+                    elif cash_pos == 'Adequate':
+                        cash_icon = "🟡"
+                    elif 'Concerning' in cash_pos:
+                        cash_icon = "🔴"
+                    elif 'Excellent' in cash_pos:
+                        cash_icon = "💚"
+                    else:
+                        cash_icon = "⚪"
+                    
+                    st.metric("Cash Position", f"{cash_icon} {cash_pos}")
+                
+                # Financial Summary
+                st.markdown("---")
+                st.subheader("💰 Financial Summary")
+                st.write(result['summary'])
+                
+                # Detailed Metrics
+                if detailed_metrics_single and 'financial_details' in result:
+                    st.markdown("---")
+                    st.subheader("📊 Key Financial Metrics")
+                    details = result['financial_details']
+                    
+                    # Calculate P/E ratio
+                    pe_ratio = None
+                    pe_display = "N/A"
+                    
+                    if 'key_metrics' in result:
+                        net_income_data = result['key_metrics'].get('NetIncome', {})
+                        net_income = net_income_data.get('value') if net_income_data else None
+                        pe_ratio, error = calculate_pe_ratio(result['ticker'], net_income)
+                        if pe_ratio:
+                            pe_display = f"{pe_ratio:.2f}"
+                        elif error:
+                            pe_display = error
+                    else:
+                        pe_ratio, error = calculate_pe_ratio(result['ticker'])
+                        if pe_ratio:
+                            pe_display = f"{pe_ratio:.2f}"
+                        elif error:
+                            pe_display = error
+                    
+                    metric_col1, metric_col2 = st.columns(2)
+                    with metric_col1:
+                        st.write(f"💰 **Revenue:** {details.get('revenue', 'N/A')}")
+                        st.write(f"💵 **Cash:** {details.get('cash', 'N/A')}")
+                        if 'cash_debt_ratio' in details:
+                            st.write(f"📊 **Cash/Debt Ratio:** {details.get('cash_debt_ratio', 'N/A')}")
+                    
+                    with metric_col2:
+                        st.write(f"📈 **Net Income:** {details.get('net_income', 'N/A')}")
+                        st.write(f"💳 **Debt:** {details.get('debt', 'N/A')}")
+                        st.write(f"📊 **P/E Ratio:** {pe_display}")
+                    
+                    # Data sources debug
+                    if 'key_metrics' in result and result['key_metrics']:
+                        with st.expander("🔍 Data Sources & Periods (Debug)", expanded=False):
+                            debug_data = []
+                            for metric_name, metric_data in result['key_metrics'].items():
+                                debug_data.append({
+                                    'Metric': metric_name,
+                                    'Value': f"${metric_data.get('value', 0):,.0f}" if metric_data.get('value') else 'N/A',
+                                    'Period': metric_data.get('period_type', 'Unknown'),
+                                    'Date': metric_data.get('date', 'Unknown'),
+                                    'Form': metric_data.get('form', 'Unknown'),
+                                    'XBRL Concept': metric_data.get('concept', 'Unknown')
+                                })
+                            
+                            if debug_data:
+                                debug_df = pd.DataFrame(debug_data)
+                                st.dataframe(debug_df, hide_index=True, width='stretch')
+                
+                # Quarterly Trends
+                if result.get('quarterly_trends'):
+                    st.markdown("---")
+                    st.subheader("📈 Quarterly Financial Trends (Last 3 Quarters)")
+                    trends = result['quarterly_trends']
+                    
+                    num_periods = len(trends['periods'])
+                    revenues = trends['revenues'][:num_periods] if trends['revenues'] else []
+                    revenues = revenues + [0] * (num_periods - len(revenues))
+                    
+                    costs = trends['costs'][:num_periods] if trends['costs'] else []
+                    costs = costs + [0] * (num_periods - len(costs))
+                    
+                    net_income = trends['net_income'][:num_periods] if trends['net_income'] else []
+                    net_income = net_income + [0] * (num_periods - len(net_income))
+                    
+                    chart_data = pd.DataFrame({
+                        'Period': trends['periods'],
+                        'Revenue': revenues,
+                        'Costs': costs,
+                        'Net Income': net_income
+                    })
+                    
+                    for col in ['Revenue', 'Costs', 'Net Income']:
+                        if col in chart_data.columns:
+                            chart_data[f'{col} ($M)'] = chart_data[col] / 1_000_000
+                    
+                    st.write("**Financial Performance Trend (in millions):**")
+                    chart_df = chart_data[['Period', 'Revenue ($M)', 'Costs ($M)', 'Net Income ($M)']].set_index('Period')
+                    st.bar_chart(chart_df)
+                    
+                    # Calculate trends
+                    if len(trends['revenues']) >= 2:
+                        rev_growth = ((trends['revenues'][-1] - trends['revenues'][0]) / trends['revenues'][0] * 100) if trends['revenues'][0] != 0 else 0
+                        cost_growth = ((trends['costs'][-1] - trends['costs'][0]) / trends['costs'][0] * 100) if trends['costs'] and trends['costs'][0] != 0 else 0
+                        income_growth = ((trends['net_income'][-1] - trends['net_income'][0]) / trends['net_income'][0] * 100) if trends['net_income'] and trends['net_income'][0] != 0 else 0
+                        
+                        trend_col1, trend_col2, trend_col3 = st.columns(3)
+                        with trend_col1:
+                            st.metric("Revenue Growth", f"{rev_growth:+.1f}%", 
+                                     delta=f"${(trends['revenues'][-1] - trends['revenues'][0])/1_000_000:.1f}M")
+                        with trend_col2:
+                            if trends['costs']:
+                                st.metric("Cost Growth", f"{cost_growth:+.1f}%",
+                                         delta=f"${(trends['costs'][-1] - trends['costs'][0])/1_000_000:.1f}M")
+                        with trend_col3:
+                            if trends['net_income']:
+                                st.metric("Profit Growth", f"{income_growth:+.1f}%",
+                                         delta=f"${(trends['net_income'][-1] - trends['net_income'][0])/1_000_000:.1f}M")
+                        
+                        # Analysis insights
+                        if trends['revenues'] and trends['costs'] and rev_growth > 0:
+                            if rev_growth > cost_growth:
+                                st.success("✅ **Positive Trend**: Revenue growing faster than costs - improving margins")
+                            elif cost_growth > rev_growth:
+                                st.warning("⚠️ **Watch**: Costs growing faster than revenue - margin compression")
+                            else:
+                                st.info("ℹ️ **Stable**: Revenue and costs growing at similar rates")
+                
+                # Options & Sentiment Analysis
+                st.markdown("---")
+                st.subheader("📊 Options & Sentiment Analysis")
+                with st.spinner("Fetching options data..."):
+                    options_analysis = get_options_sentiment_analysis(result['ticker'])
+                
+                if options_analysis.get('error') and not options_analysis.get('has_options'):
+                    st.warning(f"⚠️ {options_analysis['error']}")
+                elif options_analysis.get('has_options'):
+                    opt_col1, opt_col2, opt_col3 = st.columns(3)
+                    
+                    with opt_col1:
+                        st.write("**📈 Implied Volatility (IV)**")
+                        if options_analysis['implied_volatility']:
+                            iv_value = options_analysis['implied_volatility']
+                            st.metric("30-Day IV", f"{iv_value:.2f}%")
+                            
+                            if iv_value < 20:
+                                st.caption("🟢 Low volatility - stable stock")
+                            elif iv_value < 40:
+                                st.caption("🟡 Moderate volatility - normal")
+                            elif iv_value < 60:
+                                st.caption("🟠 High volatility - active trading")
+                            else:
+                                st.caption("🔴 Very high volatility - caution")
+                        else:
+                            st.write("N/A")
+                    
+                    with opt_col2:
+                        st.write("**🎯 Put/Call Ratio**")
+                        if options_analysis['put_call_ratio'] is not None:
+                            pc_ratio = options_analysis['put_call_ratio']
+                            sentiment = options_analysis['sentiment']
+                            
+                            if 'Bullish' in sentiment:
+                                sentiment_color = "🟢"
+                            elif 'Bearish' in sentiment:
+                                sentiment_color = "🔴"
+                            else:
+                                sentiment_color = "🟡"
+                            
+                            st.metric("P/C Ratio", f"{pc_ratio:.3f}")
+                            st.caption(f"{sentiment_color} {sentiment}")
+                            
+                            if pc_ratio > 1:
+                                st.caption("More puts than calls - bearish bias")
+                            else:
+                                st.caption("More calls than puts - bullish bias")
+                        else:
+                            st.write("N/A")
+                    
+                    with opt_col3:
+                        st.write("**📊 Options Activity**")
+                        if options_analysis['options_volume']:
+                            volume = options_analysis['options_volume']
+                            st.metric("Total Volume", f"{volume:,}")
+                            
+                            if options_analysis['unusual_activity']:
+                                st.caption("🔥 Unusual activity detected!")
+                            else:
+                                st.caption("Normal trading volume")
+                        else:
+                            st.write("N/A")
+                    
+                    if options_analysis.get('options_data'):
+                        st.markdown("---")
+                        st.write("**📋 Detailed Options Breakdown:**")
+                        
+                        opt_data = options_analysis['options_data']
+                        detail_col1, detail_col2, detail_col3, detail_col4 = st.columns(4)
+                        
+                        with detail_col1:
+                            st.write(f"**Expiration:** {opt_data['expiration']}")
+                        with detail_col2:
+                            st.write(f"**Call Volume:** {opt_data['call_volume']:,}")
+                        with detail_col3:
+                            st.write(f"**Put Volume:** {opt_data['put_volume']:,}")
+                        with detail_col4:
+                            st.write(f"**Total OI:** {opt_data['total_oi']:,}")
+                    
+                    st.markdown("---")
+                    st.write("**🎓 What This Means:**")
+                    
+                    iv = options_analysis.get('implied_volatility', 0)
+                    pc = options_analysis.get('put_call_ratio', 0)
+                    sentiment = options_analysis.get('sentiment', 'Unknown')
+                    
+                    if iv and pc:
+                        if iv > 40 and pc < 0.7:
+                            st.info("🚀 **High volatility + Bullish sentiment**: Market expects big moves upward. Potential opportunity but risky.")
+                        elif iv > 40 and pc > 1.5:
+                            st.warning("⚠️ **High volatility + Bearish sentiment**: Market expects big moves downward. Exercise caution.")
+                        elif iv < 30 and pc < 0.7:
+                            st.success("✅ **Low volatility + Bullish sentiment**: Stable growth expected. Lower risk profile.")
+                        elif iv < 30 and pc > 1.5:
+                            st.error("🔍 **Low volatility + Bearish sentiment**: Stable but negative outlook. Investigate fundamentals.")
+                        else:
+                            st.info(f"📊 **Moderate conditions**: {sentiment} sentiment with moderate volatility.")
+                else:
+                    st.info("ℹ️ Options data not available for this ticker. May be a thinly-traded stock or options not offered.")
+                
+                # Recent Filings
+                if include_filings_single and result.get('recent_filings'):
+                    st.markdown("---")
+                    st.subheader("📄 Recent SEC Filings")
+                    filings_df = pd.DataFrame(result['recent_filings'])
+                    st.dataframe(filings_df, hide_index=True, width='stretch')
+                
+                # Export functionality
+                st.markdown("---")
+                st.subheader("📥 Export Analysis")
+                
+                summary_data = [{
+                    'Ticker': result['ticker'],
+                    'Company': result['company_name'],
+                    'Revenue Generating': result.get('revenue_generating', False),
+                    'Profitable': result.get('profitable', False),
+                    'Cash Position': result.get('cash_position', 'Unknown'),
+                    'Summary': result['summary']
+                }]
+                
+                summary_df = pd.DataFrame(summary_data)
+                csv_buffer = io.StringIO()
+                summary_df.to_csv(csv_buffer, index=False)
+                
+                st.download_button(
+                    label="📥 Download Analysis Results (CSV)",
+                    data=csv_buffer.getvalue(),
+                    file_name=f"{ticker_to_analyze}_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+                
+            else:
+                st.error(f"❌ Analysis Failed: {result['status']}")
+                st.error(result.get('error', 'Unknown error occurred'))
+    
+    elif not uploaded_file:
         # Welcome screen
         st.markdown("""
         ### Welcome to the SEC EDGAR Financial Analysis Tool! 👋
         
-        This tool analyzes the financial health of momentum stocks using official SEC EDGAR data:
+        This tool analyzes the financial health of companies using official SEC EDGAR data:
         
-        1. **📁 Loading your CSV data** with momentum filter results
-        2. **🎯 Filtering for momentum stocks** (where Momentum Filter ✓ = True)
-        3. **🔍 Fetching SEC financial data** using official EDGAR APIs
-        4. **📊 Analyzing key metrics** like revenue, profitability, cash, and debt
-        5. **📈 Providing financial insights** with detailed health analysis
+        **Two Ways to Analyze:**
         
-        **🆕 Real SEC Data Integration:**
+        1. **🔍 Single Ticker Analysis** (Sidebar)
+           - Enter any ticker symbol
+           - Get instant comprehensive financial analysis
+           - Includes SEC filings, quarterly trends, and options data
+        
+        2. **📁 Bulk CSV Analysis** (Upload CSV)
+           - Upload CSV with momentum filter results
+           - Analyze multiple companies at once
+           - Filter for momentum stocks (where Momentum Filter ✓ = True)
+        
+        **Analysis Features:**
         - Direct access to SEC EDGAR database
         - Real-time company financials from 10-K/10-Q filings
         - Revenue, net income, cash, and debt analysis
+        - Quarterly financial trends with growth metrics
+        - Options sentiment analysis (IV, Put/Call ratio)
         - Recent filing information
         - Export capabilities for further analysis
         
         **To get started:**
-        - Upload your CSV file using the sidebar
-        - Configure analysis options (number of companies to analyze)
-        - Click "Start Analysis" to begin SEC data retrieval
+        - **Single Ticker:** Use the sidebar to enter a ticker and click "Analyze Ticker"
+        - **Bulk Analysis:** Upload your CSV file and configure analysis options
         
         **Rate Limiting Notice:** SEC APIs are limited to 10 requests per second, so analysis may take a few minutes for multiple companies.
         """)
