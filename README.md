@@ -41,9 +41,21 @@ python -m venv venv
 pip install -r requirements.txt
 ```
 
-2. **Requirements:**
+2. **Configure API Keys (Optional but Recommended):**
+Create a `.env` file in the project root:
+```
+SEC_USER_EMAIL=your-email@domain.com
+OPENAI_API_KEY=your-openai-api-key
+```
+
+**Benefits of API configuration:**
+- `SEC_USER_EMAIL`: Required for SEC EDGAR API compliance
+- `OPENAI_API_KEY`: Enables AI-powered investment insights and risk analysis
+
+3. **Requirements:**
 - Python 3.7+
 - Google Chrome browser (for web scraping)
+- OpenAI API key (optional, for AI insights)
 
 ---
 
@@ -96,6 +108,40 @@ Opens at: `http://localhost:8502`
    - ✅ **Profitable** - Company earning profit
    - ✅ **Strong Cash Position** - Cash > Debt or high cash reserves
    - 📊 **Quarterly Trends** - See revenue/profit trajectory
+   - 🤖 **AI Analyst Insights** - Intelligent commentary on risks, limitations, and suitability
+
+---
+
+## 🤖 AI-Powered Insights (New!)
+
+When configured with OpenAI API key, the tool provides:
+
+### **Intelligent Commentary On:**
+- **Investment Risks** - Debt concerns, burn rate, profitability issues
+- **Data Quality** - Missing metrics, date mismatches, XBRL limitations
+- **Retirement Suitability** - Conservative assessment for long-term investors
+
+### **Key Benefits:**
+- 🎯 **Focused Analysis** - Concise, retirement-focused insights (200 words max)
+- ⚠️ **Risk-First Approach** - Highlights concerns before opportunities
+- 📊 **Context-Aware** - Analyzes actual SEC data quality issues
+- 💡 **Plain English** - No jargon, direct communication
+
+### **Example AI Insights:**
+```
+⚠️ High Risk Investment: Company burning $455M quarterly with only 
+$711M cash runway (~1.6 quarters). While revenue growing (+26%), 
+massive net losses from warrant revaluation ($424M) indicate high 
+volatility.
+
+🔍 Data Concern: Convertible debt ($1.06B) detected, but warrant 
+liabilities ($839M additional) not captured in traditional debt 
+metrics - true leverage higher than reported.
+
+🛡️ Retirement Portfolio: NOT SUITABLE. Extreme volatility and 
+negative cash flow make this speculative, not appropriate for 
+conservative retirement investing.
+```
 
 ---
 

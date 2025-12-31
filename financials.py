@@ -9,6 +9,11 @@ import re
 import io
 import os
 import yfinance as yf
+from openai import OpenAI
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure Streamlit page
 st.set_page_config(
@@ -16,6 +21,10 @@ st.set_page_config(
     page_icon="📊",
     layout="wide"
 )
+
+# OpenAI Configuration
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 # SEC API Configuration
 # NOTE: SEC requires a User-Agent with contact information
@@ -188,6 +197,107 @@ def find_recent_filings(submissions_data, form_types=['10-K', '10-Q']):
     filings.sort(key=lambda x: x['filingDate'], reverse=True)
     return filings[:5]  # Return top 5 most recent
 
+def generate_ai_insights(ticker, company_name, analysis_result, metrics):
+    """Generate concise AI insights about the company's financial health using OpenAI
+    
+    Provides retirement investor-focused commentary on:
+    - Data quality and limitations
+    - Risk factors and concerns
+    - Key investment considerations
+    """
+    if not openai_client:
+        return None
+    
+    try:
+        # Prepare financial snapshot for AI
+        revenue = metrics.get('Revenues', {}).get('value', 0) if 'Revenues' in metrics else 0
+        net_income = metrics.get('NetIncome', {}).get('value', 0) if 'NetIncome' in metrics else 0
+        cash = metrics.get('Cash', {}).get('value', 0) if 'Cash' in metrics else 0
+        total_debt = max(
+            metrics.get('Debt', {}).get('value', 0) or 0,
+            metrics.get('TotalDebt', {}).get('value', 0) or 0
+        )
+        total_liabilities = metrics.get('TotalLiabilities', {}).get('value', 0) if 'TotalLiabilities' in metrics else 0
+        
+        # Calculate key ratios
+        cash_debt_ratio = (cash / total_debt) if total_debt > 0 else 0
+        debt_to_assets = (total_liabilities / metrics.get('TotalAssets', {}).get('value', 1)) if 'TotalAssets' in metrics else 0
+        
+        # Build context for AI
+        financial_context = f"""Company: {company_name} ({ticker})
+Revenue: ${revenue:,.0f} ({metrics.get('Revenues', {}).get('period_type', 'N/A')})
+Net Income: ${net_income:,.0f} ({'Profit' if net_income > 0 else 'Loss'})
+Cash: ${cash:,.0f}
+Debt: ${total_debt:,.0f}
+Total Liabilities: ${total_liabilities:,.0f}
+Cash/Debt Ratio: {cash_debt_ratio:.2f}x
+Debt/Assets: {debt_to_assets:.1%}
+Cash Position: {analysis_result.get('cash_position', 'Unknown')}
+Profitable: {'Yes' if analysis_result.get('profitable') else 'No'}
+Revenue Generating: {'Yes' if analysis_result.get('revenue_generating') else 'No'}
+Debt Concerns: {'Yes' if analysis_result.get('debt_concerns') else 'No'}"""
+
+        # Check for data quality issues
+        data_issues = []
+        if 'Debt' in metrics and 'TotalDebt' in metrics:
+            debt_date = metrics.get('Debt', {}).get('date', '')
+            total_debt_date = metrics.get('TotalDebt', {}).get('date', '')
+            cash_date = metrics.get('Cash', {}).get('date', '')
+            if debt_date < cash_date or total_debt_date < cash_date:
+                data_issues.append("Debt data from older filing than cash data")
+        
+        if total_debt == 0 and total_liabilities > cash * 2:
+            data_issues.append(f"No traditional debt found but Total Liabilities (${total_liabilities:,.0f}) significantly exceed cash")
+        
+        if net_income < 0 and abs(net_income) > revenue * 2:
+            data_issues.append(f"Net loss (${abs(net_income):,.0f}) far exceeds revenue - likely non-operating losses")
+        
+        data_issues_str = "\n".join([f"- {issue}" for issue in data_issues]) if data_issues else "None identified"
+        
+        prompt = f"""You are a financial advisor analyzing stocks for a retirement investor. Provide a CONCISE analysis (max 200 words) covering:
+
+{financial_context}
+
+Data Quality Issues:
+{data_issues_str}
+
+Provide brief commentary on:
+1. Key investment risks (debt, profitability, burn rate)
+2. Data limitations that investors should verify manually
+3. Suitability for retirement portfolio (conservative assessment)
+
+Format: Use short paragraphs with emojis. Be direct and honest about concerns. Focus on what matters most for retirement investing."""
+
+        response = openai_client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a conservative financial advisor specializing in retirement investing. Provide concise, honest assessments focusing on risk factors and data quality."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=300,
+            temperature=0.3
+        )
+        
+        return response.choices[0].message.content.strip()
+        
+    except Exception as e:
+        st.warning(f"AI insights unavailable: {str(e)}")
+        return None
+    
+    for i, form in enumerate(recent.get('form', [])):
+        if form in form_types:
+            filing = {
+                'form': form,
+                'filingDate': recent['filingDate'][i],
+                'accessionNumber': recent['accessionNumber'][i],
+                'reportDate': recent.get('reportDate', [None] * len(recent['form']))[i]
+            }
+            filings.append(filing)
+    
+    # Sort by filing date (most recent first)
+    filings.sort(key=lambda x: x['filingDate'], reverse=True)
+    return filings[:5]  # Return top 5 most recent
+
 def extract_quarterly_trends(facts_data):
     """Extract quarterly financial trends for revenue, costs, and profit"""
     if not facts_data or 'facts' not in facts_data:
@@ -279,7 +389,16 @@ def extract_key_financials(facts_data):
         'TotalLiabilities': ['Liabilities', 'LiabilitiesAndStockholdersEquity', 'LiabilitiesCurrent'],
         'Cash': ['CashAndCashEquivalentsAtCarryingValue', 'Cash', 'CashCashEquivalentsAndShortTermInvestments', 'CashAndCashEquivalentsFairValueDisclosure'],
         'Debt': ['LongTermDebt', 'LongTermDebtCurrent', 'LongTermDebtNoncurrent', 'LongTermDebtAndCapitalLeaseObligations', 'DebtCurrent', 'ShortTermBorrowings'],
-        'TotalDebt': ['DebtAndCapitalLeaseObligations', 'DebtLongtermAndShorttermCombinedAmount', 'LongTermDebt']  # Removed Liabilities fallback
+        'TotalDebt': [
+            'DebtAndCapitalLeaseObligations', 
+            'DebtLongtermAndShorttermCombinedAmount', 
+            'LongTermDebt',
+            'ConvertibleDebt',
+            'ConvertibleNotesPayable',
+            'ConvertibleDebtNoncurrent',
+            'DebtInstrumentCarryingAmount',
+            'SeniorNotes'
+        ]  # Added convertible debt concepts for companies like WULF
     }
     
     # Look in us-gaap taxonomy
@@ -450,9 +569,19 @@ def analyze_financial_health(metrics):
     debt = metrics.get('Debt', {}).get('value', 0) or 0
     total_debt = metrics.get('TotalDebt', {}).get('value', 0) or 0
     
-    # Use specific debt if available, otherwise use total debt/liabilities
-    effective_debt = debt if debt > 0 else total_debt
-    debt_label = "Debt" if debt > 0 else "Total Liabilities"
+    # Use the larger of specific debt or total debt (most comprehensive)
+    effective_debt = max(debt, total_debt)
+    
+    # Determine which debt source we're using
+    if total_debt > 0 and total_debt >= debt:
+        debt_source = 'TotalDebt'
+        debt_label = "Total Debt (including convertible)"
+    elif debt > 0:
+        debt_source = 'Debt'
+        debt_label = "Long-term Debt"
+    else:
+        debt_source = None
+        debt_label = "No debt data"
     
     # Track cash data period
     if 'Cash' in metrics:
@@ -463,47 +592,63 @@ def analyze_financial_health(metrics):
     else:
         analysis['details']['cash'] = "Cash data not available"
     
-    # Track debt data period
-    if 'Debt' in metrics:
-        debt_data = metrics['Debt']
+    # Track debt data period - CRITICAL: Show actual date from SEC data
+    if debt_source and debt_source in metrics:
+        debt_data = metrics[debt_source]
         analysis['periods']['debt'] = f"As of {debt_data.get('date', 'Unknown')}"
         period_info = f" (As of {debt_data.get('date', 'Unknown')})"
-        analysis['details']['debt'] = f"${debt:,.0f}{period_info}"
-    elif 'TotalDebt' in metrics:
-        debt_data = metrics['TotalDebt']
-        analysis['periods']['debt'] = f"As of {debt_data.get('date', 'Unknown')}"
-        period_info = f" (As of {debt_data.get('date', 'Unknown')})"
-        analysis['details']['debt'] = f"${total_debt:,.0f} ({debt_label}){period_info}"
-    else:
-        # If no debt metrics found, company likely has no debt
-        analysis['details']['debt'] = "$0 (No traditional debt reported)"
+        analysis['details']['debt'] = f"${effective_debt:,.0f} ({debt_label}){period_info}"
+        
+        # WARNING: Check if debt data is from older period than cash
         if 'Cash' in metrics:
-            analysis['periods']['debt'] = f"As of {metrics['Cash'].get('date', 'Unknown')}"
+            cash_date = metrics['Cash'].get('date', '')
+            debt_date = debt_data.get('date', '')
+            if debt_date < cash_date:
+                analysis['details']['debt'] += f" ⚠️ NOTE: Debt data from older filing than cash - may not reflect current position"
+    else:
+        # NO DEBT DATA FOUND - don't assume $0, indicate data unavailable
+        analysis['details']['debt'] = "⚠️ Debt data not available in recent filings"
+        if 'Cash' in metrics:
+            analysis['periods']['debt'] = f"As of {metrics['Cash'].get('date', 'Unknown')} (no debt data)"
+        analysis['debt_concerns'] = True  # Flag as concerning when we can't verify debt
     
     # Cash position analysis using effective debt
     if cash > 0 and effective_debt > 0:
         cash_to_debt_ratio = cash / effective_debt
         if cash_to_debt_ratio > 2:
-            analysis['cash_position'] = 'Strong'
+            analysis['cash_position'] = 'Strong (2x+ Cash/Debt)'
         elif cash_to_debt_ratio > 1:
-            analysis['cash_position'] = 'Adequate'
-        elif effective_debt > cash * 2:
-            analysis['cash_position'] = 'Concerning'
-            analysis['debt_concerns'] = True
+            analysis['cash_position'] = 'Adequate (Cash > Debt)'
+        elif cash_to_debt_ratio > 0.5:
+            analysis['cash_position'] = 'Moderate (Debt < 2x Cash)'
         else:
-            analysis['cash_position'] = 'Moderate'
+            analysis['cash_position'] = 'Concerning (Debt > 2x Cash)'
+            analysis['debt_concerns'] = True
         
         analysis['details']['cash_debt_ratio'] = f"{cash_to_debt_ratio:.2f}x"
     elif cash > 0 and effective_debt == 0:
-        analysis['cash_position'] = 'Excellent (No Debt)'
+        # Only claim "No Debt" if we actually have debt data showing $0
+        if debt_source:
+            analysis['cash_position'] = 'Excellent (No Debt)'
+        else:
+            analysis['cash_position'] = 'Unknown (No debt data available)'
     elif cash == 0 and effective_debt > 0:
-        analysis['cash_position'] = 'Concerning (No Cash, Has Debt)'
+        analysis['cash_position'] = 'Critical (No Cash, Has Debt)'
+        analysis['debt_concerns'] = True
     else:
-        analysis['cash_position'] = 'Unknown'
+        analysis['cash_position'] = 'Unknown (Insufficient data)'
     
-    # Generate summary with period awareness
+    # Generate summary with period awareness and debt warnings
     revenue_status = "generating revenue" if analysis['revenue_generating'] else "not generating significant revenue"
     profit_status = "profitable" if analysis['profitable'] else "unprofitable"
+    
+    # Add debt concern to summary if applicable
+    debt_warning = ""
+    if analysis['debt_concerns']:
+        if effective_debt > cash * 2:
+            debt_warning = " ⚠️ HIGH DEBT LOAD - debt exceeds cash by 2x or more."
+        elif not debt_source:
+            debt_warning = " ⚠️ Debt data unavailable - cannot verify debt position."
     
     # Add period information to summary
     latest_date = 'Unknown'
@@ -512,7 +657,7 @@ def analyze_financial_health(metrics):
     elif 'NetIncome' in metrics and metrics['NetIncome'].get('date'):
         latest_date = metrics['NetIncome']['date']
     
-    analysis['summary'] = f"Company is {revenue_status} and {profit_status}. Cash position: {analysis['cash_position'].lower()}. Data as of: {latest_date}"
+    analysis['summary'] = f"Company is {revenue_status} and {profit_status}. Cash position: {analysis['cash_position'].lower()}.{debt_warning} Data as of: {latest_date}"
     
     return analysis
 
@@ -1001,6 +1146,19 @@ def main():
                                             st.write("**Financial Summary:**")
                                             st.write(result['summary'])
                                             
+                                            # AI Analyst Insights (compact for bulk analysis)
+                                            if openai_client and 'key_metrics' in result:
+                                                with st.expander("🤖 AI Analyst Insights", expanded=False):
+                                                    with st.spinner("Generating..."):
+                                                        ai_insights = generate_ai_insights(
+                                                            result['ticker'],
+                                                            result['company_name'],
+                                                            result,
+                                                            result['key_metrics']
+                                                        )
+                                                        if ai_insights:
+                                                            st.info(ai_insights)
+                                            
                                             if detailed_metrics and 'financial_details' in result:
                                                 st.write("**Key Metrics:**")
                                                 details = result['financial_details']
@@ -1354,6 +1512,32 @@ def main():
                 st.markdown("---")
                 st.subheader("💰 Financial Summary")
                 st.write(result['summary'])
+                
+                # AI Analyst Insights
+                if openai_client and 'key_metrics' in result:
+                    st.markdown("---")
+                    st.subheader("🤖 AI Analyst Insights")
+                    with st.spinner("Generating AI analysis..."):
+                        ai_insights = generate_ai_insights(
+                            result['ticker'],
+                            result['company_name'],
+                            result,
+                            result['key_metrics']
+                        )
+                        if ai_insights:
+                            st.info(ai_insights)
+                        else:
+                            st.caption("💡 Enable AI insights by setting OPENAI_API_KEY in your .env file")
+                elif not openai_client:
+                    with st.expander("💡 Enable AI Insights", expanded=False):
+                        st.markdown("""
+                        **Get intelligent commentary on:**
+                        - Investment risks and concerns
+                        - Data quality limitations
+                        - Retirement portfolio suitability
+                        
+                        **To enable:** Add `OPENAI_API_KEY=your-key` to your `.env` file
+                        """)
                 
                 # Detailed Metrics
                 if detailed_metrics_single and 'financial_details' in result:
