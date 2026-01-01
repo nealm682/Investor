@@ -239,18 +239,43 @@ Debt Concerns: {'Yes' if analysis_result.get('debt_concerns') else 'No'}"""
 
         # Check for data quality issues
         data_issues = []
-        if 'Debt' in metrics and 'TotalDebt' in metrics:
-            debt_date = metrics.get('Debt', {}).get('date', '')
-            total_debt_date = metrics.get('TotalDebt', {}).get('date', '')
-            cash_date = metrics.get('Cash', {}).get('date', '')
-            if debt_date < cash_date or total_debt_date < cash_date:
-                data_issues.append("Debt data from older filing than cash data")
         
-        if total_debt == 0 and total_liabilities > cash * 2:
-            data_issues.append(f"No traditional debt found but Total Liabilities (${total_liabilities:,.0f}) significantly exceed cash")
+        # Get data dates
+        cash_date = metrics.get('Cash', {}).get('date', '') if 'Cash' in metrics else ''
+        debt_date = metrics.get('Debt', {}).get('date', '') if 'Debt' in metrics else ''
+        total_debt_date = metrics.get('TotalDebt', {}).get('date', '') if 'TotalDebt' in metrics else ''
+        revenue_date = metrics.get('Revenues', {}).get('date', '') if 'Revenues' in metrics else ''
         
-        if net_income < 0 and abs(net_income) > revenue * 2:
-            data_issues.append(f"Net loss (${abs(net_income):,.0f}) far exceeds revenue - likely non-operating losses")
+        # Check for date mismatches (only flag if >6 months difference)
+        from datetime import datetime, timedelta
+        if cash_date and debt_date:
+            try:
+                cash_dt = datetime.strptime(cash_date, '%Y-%m-%d')
+                debt_dt = datetime.strptime(debt_date, '%Y-%m-%d')
+                if abs((cash_dt - debt_dt).days) > 180:  # 6 months
+                    data_issues.append(f"Debt data from different period than cash (Debt: {debt_date}, Cash: {cash_date})")
+            except:
+                pass
+        
+        # Check for missing current portion of debt
+        if 'Debt' in metrics and 'TotalLiabilities' in metrics:
+            # If debt seems low compared to liabilities, may be missing current portion
+            debt_to_liabilities_ratio = total_debt / total_liabilities if total_liabilities > 0 else 0
+            if debt_to_liabilities_ratio < 0.3 and total_debt > 0:
+                data_issues.append(f"Reported debt (${total_debt:,.0f}) may be incomplete - represents only {debt_to_liabilities_ratio:.1%} of Total Liabilities (${total_liabilities:,.0f}). May be missing current portion of debt.")
+        
+        # Check for extreme losses vs revenue
+        if net_income < 0 and revenue > 0 and abs(net_income) > revenue * 2:
+            data_issues.append(f"Net loss (${abs(net_income):,.0f}) far exceeds revenue (${revenue:,.0f}) - likely includes non-operating losses (warrant revaluations, write-downs, etc.)")
+        
+        # Check for very old TotalDebt data
+        if 'TotalDebt' in metrics and total_debt_date:
+            try:
+                total_debt_dt = datetime.strptime(total_debt_date, '%Y-%m-%d')
+                if total_debt_dt.year < 2023:  # More than 2 years old
+                    data_issues.append(f"TotalDebt concept shows data from {total_debt_date} (outdated) - using most recent debt metric available")
+            except:
+                pass
         
         data_issues_str = "\n".join([f"- {issue}" for issue in data_issues]) if data_issues else "None identified"
         
@@ -261,17 +286,18 @@ Debt Concerns: {'Yes' if analysis_result.get('debt_concerns') else 'No'}"""
 Data Quality Issues:
 {data_issues_str}
 
-Provide brief commentary on:
-1. Key investment risks (debt, profitability, burn rate)
-2. Data limitations that investors should verify manually
-3. Suitability for retirement portfolio (conservative assessment)
+Provide brief, balanced commentary on:
+1. Financial strength: profitability, revenue trends, cash generation
+2. Risk factors: debt levels, burn rate (if unprofitable), leverage concerns  
+3. Data limitations that require manual verification
+4. Retirement portfolio fit: conservative/moderate/aggressive classification
 
-Format: Use short paragraphs with emojis. Be direct and honest about concerns. Focus on what matters most for retirement investing."""
+Be honest but fair - profitable companies with manageable debt are suitable for retirement investing. Only flag as unsuitable if: unprofitable with high burn rate, excessive leverage (debt >3x cash), or speculative business model."""
 
         response = openai_client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are a conservative financial advisor specializing in retirement investing. Provide concise, honest assessments focusing on risk factors and data quality."},
+                {"role": "system", "content": "You are a balanced financial advisor for retirement investing. Assess companies fairly - profitable businesses with reasonable debt are suitable. Be conservative but not overly pessimistic."},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=300,
@@ -388,17 +414,19 @@ def extract_key_financials(facts_data):
         'TotalAssets': ['Assets', 'AssetsCurrent', 'AssetsNoncurrent'],
         'TotalLiabilities': ['Liabilities', 'LiabilitiesAndStockholdersEquity', 'LiabilitiesCurrent'],
         'Cash': ['CashAndCashEquivalentsAtCarryingValue', 'Cash', 'CashCashEquivalentsAndShortTermInvestments', 'CashAndCashEquivalentsFairValueDisclosure'],
-        'Debt': ['LongTermDebt', 'LongTermDebtCurrent', 'LongTermDebtNoncurrent', 'LongTermDebtAndCapitalLeaseObligations', 'DebtCurrent', 'ShortTermBorrowings'],
+        'Debt': ['LongTermDebt', 'LongTermDebtCurrent', 'LongTermDebtNoncurrent', 'LongTermDebtAndCapitalLeaseObligations', 'LongTermDebtAndCapitalLeaseObligationsCurrent', 'DebtCurrent', 'ShortTermBorrowings'],
         'TotalDebt': [
             'DebtAndCapitalLeaseObligations', 
             'DebtLongtermAndShorttermCombinedAmount', 
             'LongTermDebt',
+            'LongTermDebtAndCapitalLeaseObligations',
+            'LongTermDebtAndCapitalLeaseObligationsCurrent',
             'ConvertibleDebt',
             'ConvertibleNotesPayable',
             'ConvertibleDebtNoncurrent',
             'DebtInstrumentCarryingAmount',
             'SeniorNotes'
-        ]  # Added convertible debt concepts for companies like WULF
+        ]  # Comprehensive debt concepts including current portions
     }
     
     # Look in us-gaap taxonomy
