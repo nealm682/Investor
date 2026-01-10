@@ -395,7 +395,7 @@ def extract_quarterly_trends(facts_data):
                     quarterly_values.sort(key=lambda x: x.get('end', ''), reverse=True)
                     
                     # Check if this concept has more recent data than what we've found so far
-                    if quarterly_values and len(quarterly_values) >= 3:
+                    if quarterly_values and len(quarterly_values) >= 6:
                         most_recent_date = quarterly_values[0].get('end', '')
                         if most_recent_date > best_date:
                             best_date = most_recent_date
@@ -403,18 +403,18 @@ def extract_quarterly_trends(facts_data):
         
         # Use the best (most recent) quarterly values found across all concepts
         if best_quarterly_values:
-            if len(best_quarterly_values) >= 3 and not trends['periods']:
+            if len(best_quarterly_values) >= 6 and not trends['periods']:
                 # Store periods (only once, from the first metric with data)
-                trends['periods'] = [v.get('end') for v in best_quarterly_values[:3]]
+                trends['periods'] = [v.get('end') for v in best_quarterly_values[:6]]
                 trends['periods'].reverse()  # Oldest to newest for chart
             
             # Store values for this metric
-            trend_data = [v.get('val', 0) for v in best_quarterly_values[:3]]
+            trend_data = [v.get('val', 0) for v in best_quarterly_values[:6]]
             trend_data.reverse()  # Oldest to newest
             trends[data_key] = trend_data
     
-    # Only return if we have at least revenue data and 3 periods
-    if len(trends['periods']) >= 3 and trends['revenues']:
+    # Only return if we have at least revenue data and 6 periods
+    if len(trends['periods']) >= 6 and trends['revenues']:
         return trends
     return None
 
@@ -1644,7 +1644,7 @@ def main():
                 # Quarterly Trends
                 if result.get('quarterly_trends'):
                     st.markdown("---")
-                    st.subheader("📈 Quarterly Financial Trends (Last 3 Quarters)")
+                    st.subheader("📈 Quarterly Financial Trends (Last 6 Quarters)")
                     trends = result['quarterly_trends']
                     
                     num_periods = len(trends['periods'])
@@ -1670,7 +1670,7 @@ def main():
                     
                     st.write("**Financial Performance Trend (in millions):**")
                     chart_df = chart_data[['Period', 'Revenue ($M)', 'Costs ($M)', 'Net Income ($M)']].set_index('Period')
-                    st.bar_chart(chart_df)
+                    st.line_chart(chart_df)
                     
                     # Calculate trends
                     if len(trends['revenues']) >= 2:
@@ -1680,25 +1680,31 @@ def main():
                         
                         trend_col1, trend_col2, trend_col3 = st.columns(3)
                         with trend_col1:
-                            st.metric("Revenue Growth", f"{rev_growth:+.1f}%", 
+                            st.metric("Revenue Growth (6Q)", f"{rev_growth:+.1f}%", 
                                      delta=f"${(trends['revenues'][-1] - trends['revenues'][0])/1_000_000:.1f}M")
                         with trend_col2:
                             if trends['costs']:
-                                st.metric("Cost Growth", f"{cost_growth:+.1f}%",
+                                st.metric("Cost Growth (6Q)", f"{cost_growth:+.1f}%",
                                          delta=f"${(trends['costs'][-1] - trends['costs'][0])/1_000_000:.1f}M")
                         with trend_col3:
                             if trends['net_income']:
-                                st.metric("Profit Growth", f"{income_growth:+.1f}%",
+                                st.metric("Profit Growth (6Q)", f"{income_growth:+.1f}%",
                                          delta=f"${(trends['net_income'][-1] - trends['net_income'][0])/1_000_000:.1f}M")
                         
                         # Analysis insights
+                        st.write("**📊 Trend Analysis:**")
+                        if rev_growth > 0 and income_growth > rev_growth:
+                            st.success("✅ **Strong Trajectory**: Revenue growing and profitability improving faster than revenue")
+                        elif rev_growth > 0 and income_growth > 0:
+                            st.info("📈 **Positive Growth**: Both revenue and income increasing over 6 quarters")
+                        elif rev_growth > 0 and income_growth < 0:
+                            st.warning("⚠️ **Mixed Signals**: Revenue growing but profitability declining - watch for margin compression")
+                        elif rev_growth < 0:
+                            st.error("📉 **Declining Revenue**: Revenue declining over 6-quarter period")
+                        
                         if trends['revenues'] and trends['costs'] and rev_growth > 0:
-                            if rev_growth > cost_growth:
-                                st.success("✅ **Positive Trend**: Revenue growing faster than costs - improving margins")
-                            elif cost_growth > rev_growth:
-                                st.warning("⚠️ **Watch**: Costs growing faster than revenue - margin compression")
-                            else:
-                                st.info("ℹ️ **Stable**: Revenue and costs growing at similar rates")
+                            if cost_growth > rev_growth:
+                                st.warning("⚠️ **Margin Pressure**: Costs growing faster than revenue")
                 
                 # Options & Sentiment Analysis
                 st.markdown("---")
