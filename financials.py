@@ -292,12 +292,14 @@ Provide brief, balanced commentary on:
 3. Data limitations that require manual verification
 4. Retirement portfolio fit: conservative/moderate/aggressive classification
 
+IMPORTANT: Use plain business language. Say "quarterly revenue" or "net income" instead of technical terms like "RevenueFromContractWithCustomerExcludingAssessedTax" or XBRL concept names. Write for a retirement investor, not a technical accountant.
+
 Be honest but fair - profitable companies with manageable debt are suitable for retirement investing. Only flag as unsuitable if: unprofitable with high burn rate, excessive leverage (debt >3x cash), or speculative business model."""
 
         response = openai_client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are a balanced financial advisor for retirement investing. Assess companies fairly - profitable businesses with reasonable debt are suitable. Be conservative but not overly pessimistic."},
+                {"role": "system", "content": "You are a balanced financial advisor for retirement investing. Use plain business language - say 'quarterly revenue', 'net income', 'balance sheet', not technical XBRL terms. Assess companies fairly - profitable businesses with reasonable debt are suitable. Be conservative but not overly pessimistic."},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=300,
