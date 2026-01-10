@@ -292,21 +292,38 @@ Provide brief, balanced commentary on:
 3. Data limitations that require manual verification
 4. Retirement portfolio fit: conservative/moderate/aggressive classification
 
-IMPORTANT: Use plain business language. Say "quarterly revenue" or "net income" instead of technical terms like "RevenueFromContractWithCustomerExcludingAssessedTax" or XBRL concept names. Write for a retirement investor, not a technical accountant.
+CRITICAL FORMATTING RULES:
+- Use plain business language: say "quarterly revenue" or "net income", NOT technical XBRL terms
+- Format numbers normally with commas: $14,450,000 or $14.5 million
+- Use standard paragraphs with proper spacing
+- No special characters, subscripts, or mathematical notation
+- Write in plain text as if for an email to a client
 
 Be honest but fair - profitable companies with manageable debt are suitable for retirement investing. Only flag as unsuitable if: unprofitable with high burn rate, excessive leverage (debt >3x cash), or speculative business model."""
 
         response = openai_client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are a balanced financial advisor for retirement investing. Use plain business language - say 'quarterly revenue', 'net income', 'balance sheet', not technical XBRL terms. Assess companies fairly - profitable businesses with reasonable debt are suitable. Be conservative but not overly pessimistic."},
+                {"role": "system", "content": "You are a balanced financial advisor writing for retirement investors. CRITICAL: Write in plain text with normal formatting. Use standard number formatting ($14,450,000 or $14.5M). No special characters, mathematical notation, or unusual formatting. Use plain business language - say 'quarterly revenue', 'net income', 'balance sheet', NOT technical XBRL terms. Assess companies fairly - profitable businesses with reasonable debt are suitable."},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=300,
             temperature=0.3
         )
         
-        return response.choices[0].message.content.strip()
+        # Get the response and clean up any formatting issues
+        ai_response = response.choices[0].message.content.strip()
+        
+        # Remove any LaTeX or mathematical formatting artifacts
+        import re
+        # Remove LaTeX math mode markers
+        ai_response = re.sub(r'\$\$?', '', ai_response)
+        # Remove backslashes used in LaTeX
+        ai_response = re.sub(r'\\[a-zA-Z]+', '', ai_response)
+        # Fix any weird spacing/concatenation issues
+        ai_response = re.sub(r'(\d)\s*,\s*(\d)', r'\1,\2', ai_response)  # Fix comma spacing in numbers
+        
+        return ai_response
         
     except Exception as e:
         st.warning(f"AI insights unavailable: {str(e)}")
