@@ -93,6 +93,44 @@ streamlit run financials.py --server.port 8502
 ```
 Opens at: `http://localhost:8502`
 
+---
+
+### Step 3 (Optional): 8-Quarter Deep Dive Analysis
+
+For detailed trend analysis of individual companies:
+
+**Open Terminal 3:**
+```powershell
+streamlit run quarterly_insights.py --server.port 8503
+```
+Opens at: `http://localhost:8503`
+
+**Features:**
+- 17 financial metrics over 8 quarters (2 years)
+- Automated MD&A extraction from SEC 10-K/10-Q filings
+- AI-powered trend analysis and pattern detection
+- Interactive line charts showing metric evolution
+- Export all metrics to CSV
+
+**In the app:**
+1. **Enter ticker symbol** (e.g., AAPL, SOFI, PLTR)
+2. **Configure options:**
+   - Include MD&A insights (management commentary)
+   - AI trend analysis (pattern detection)
+   - Export to CSV
+
+3. **Click "Analyze 8 Quarters"** (takes 30-60 seconds)
+
+4. **Review across 6 tabs:**
+   - 📊 Overview - Key metrics and summary trends
+   - 📈 Growth - Revenue, growth rate, EPS
+   - 💰 Profitability - Income breakdown and margins
+   - 💵 Cash Flow - OCF, CapEx, Free Cash Flow
+   - 🏦 Balance Sheet - Cash, debt, working capital
+   - 🤖 AI Insights - Trend analysis and MD&A highlights
+
+---
+
 **In the app:**
 1. **Upload CSV:** The filtered winners CSV from Step 1
 
