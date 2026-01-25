@@ -20,6 +20,7 @@ from financials import (
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 import requests
+import yfinance as yf
 
 # Configure Streamlit
 st.set_page_config(
@@ -572,6 +573,196 @@ Use plain business language. Format numbers normally (e.g., $14.5M, not scientif
 # VISUALIZATION FUNCTIONS
 # ============================================================================
 
+def get_company_overview(ticker, cik):
+    """
+    Get company overview from SEC and yfinance
+
+    Returns:
+        Dict with description, sector, industry, employees, website, etc.
+    """
+    overview = {}
+
+    # Get SEC business description
+    try:
+        submissions = get_company_submissions(cik)
+        if submissions:
+            overview['description'] = submissions.get('description', '')
+            overview['fiscal_year_end'] = submissions.get('fiscalYearEnd', '')
+    except Exception:
+        pass
+
+    # Get yfinance company info
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+
+        overview['sector'] = info.get('sector', 'N/A')
+        overview['industry'] = info.get('industry', 'N/A')
+        overview['employees'] = info.get('fullTimeEmployees', 'N/A')
+        overview['website'] = info.get('website', 'N/A')
+        overview['market_cap'] = info.get('marketCap', 0)
+
+        # Fallback to yfinance description if SEC doesn't have one
+        if not overview.get('description'):
+            overview['description'] = info.get('longBusinessSummary', 'No description available')
+    except Exception:
+        pass
+
+    return overview
+
+def get_price_data(ticker, period):
+    """
+    Fetch historical price data using yfinance
+
+    Args:
+        ticker: Stock symbol
+        period: Time period ('1mo', '3mo', '6mo', '1y', '2y', '5y', 'max')
+
+    Returns:
+        DataFrame with Date and Close price
+    """
+    try:
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period=period)
+
+        if hist.empty:
+            return None
+
+        # Reset index to make Date a column
+        hist = hist.reset_index()
+
+        # Keep only Date and Close columns
+        price_data = pd.DataFrame({
+            'Date': hist['Date'],
+            'Close': hist['Close']
+        })
+
+        return price_data
+    except Exception:
+        return None
+
+def render_company_overview(overview):
+    """
+    Display company overview section with key info
+    """
+    if not overview:
+        return
+
+    st.subheader("📋 Company Overview")
+
+    # Key stats in columns
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        sector = overview.get('sector', 'N/A')
+        st.metric("Sector", sector)
+
+    with col2:
+        industry = overview.get('industry', 'N/A')
+        st.metric("Industry", industry)
+
+    with col3:
+        employees = overview.get('employees', 'N/A')
+        if isinstance(employees, int):
+            employees_str = f"{employees:,}"
+        else:
+            employees_str = employees
+        st.metric("Full Time Employees", employees_str)
+
+    with col4:
+        fiscal_year = overview.get('fiscal_year_end', 'N/A')
+        if fiscal_year and fiscal_year != 'N/A':
+            # Format as "Month DD" (e.g., "0930" -> "September 27")
+            try:
+                month = fiscal_year[:2]
+                day = fiscal_year[2:]
+                month_names = ['', 'January', 'February', 'March', 'April', 'May', 'June',
+                              'July', 'August', 'September', 'October', 'November', 'December']
+                fiscal_display = f"{month_names[int(month)]} {int(day)}"
+            except:
+                fiscal_display = fiscal_year
+        else:
+            fiscal_display = 'N/A'
+        st.metric("Fiscal Year Ends", fiscal_display)
+
+    # Business description
+    description = overview.get('description', '')
+    if description and description != 'N/A':
+        with st.expander("📄 Business Description", expanded=False):
+            st.write(description)
+
+    # Website link
+    website = overview.get('website', '')
+    if website and website != 'N/A':
+        st.markdown(f"**Website:** [{website}]({website})")
+
+    st.markdown("---")
+
+def render_price_chart(ticker):
+    """
+    Display interactive price chart with multiple time frame options
+    """
+    st.subheader(f"📈 Price Chart - {ticker}")
+
+    # Time period selector buttons
+    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+
+    with col1:
+        if st.button("1M", key="1m"):
+            st.session_state['price_period'] = '1mo'
+    with col2:
+        if st.button("3M", key="3m"):
+            st.session_state['price_period'] = '3mo'
+    with col3:
+        if st.button("6M", key="6m"):
+            st.session_state['price_period'] = '6mo'
+    with col4:
+        if st.button("1Y", key="1y"):
+            st.session_state['price_period'] = '1y'
+    with col5:
+        if st.button("2Y", key="2y"):
+            st.session_state['price_period'] = '2y'
+    with col6:
+        if st.button("5Y", key="5y"):
+            st.session_state['price_period'] = '5y'
+    with col7:
+        if st.button("MAX", key="max"):
+            st.session_state['price_period'] = 'max'
+
+    # Default to 1 year if not set
+    if 'price_period' not in st.session_state:
+        st.session_state['price_period'] = '1y'
+
+    period = st.session_state['price_period']
+
+    # Fetch and display price data
+    with st.spinner(f"Loading {period} price data..."):
+        price_data = get_price_data(ticker, period)
+
+    if price_data is not None and not price_data.empty:
+        # Calculate price change
+        start_price = price_data['Close'].iloc[0]
+        end_price = price_data['Close'].iloc[-1]
+        price_change = ((end_price - start_price) / start_price) * 100
+
+        # Display metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Current Price", f"${end_price:.2f}")
+        with col2:
+            st.metric("Period Change", f"{price_change:+.2f}%")
+        with col3:
+            period_display = period.replace('mo', ' month').replace('y', ' year').upper()
+            st.metric("Time Period", period_display)
+
+        # Plot the chart
+        chart_data = price_data.set_index('Date')
+        st.line_chart(chart_data['Close'])
+    else:
+        st.warning(f"⚠️ Could not load price data for {ticker}")
+
+    st.markdown("---")
+
 def render_growth_charts(trends):
     """Display revenue, growth rate, and EPS charts"""
     st.subheader("📈 Growth Metrics (8 Quarters)")
@@ -720,6 +911,9 @@ def analyze_ticker(ticker, ticker_df, include_mda, ai_analysis):
     submissions = get_company_submissions(cik)
     company_name = submissions.get('name', 'Unknown') if submissions else 'Unknown'
 
+    # Get company overview (description, sector, industry, etc.)
+    overview = get_company_overview(ticker, cik)
+
     # MD&A extraction (if enabled)
     mda_data = None
     if include_mda:
@@ -738,6 +932,7 @@ def analyze_ticker(ticker, ticker_df, include_mda, ai_analysis):
     return {
         'ticker': ticker,
         'company_name': company_name,
+        'overview': overview,
         'trends': trends,
         'mda_data': mda_data,
         'patterns': patterns,
@@ -827,11 +1022,19 @@ def display_analysis_results(result, export_csv):
     trends = result['trends']
     company_name = result['company_name']
     ticker = result['ticker']
+    overview = result.get('overview', {})
 
     # Header
     current_price = get_current_stock_price(ticker)
     st.header(f"📊 {ticker} - {company_name}")
     st.subheader(f"Current Price: {current_price}")
+
+    # Company overview (displayed first)
+    if overview:
+        render_company_overview(overview)
+
+    # Price chart with time frame options
+    render_price_chart(ticker)
 
     # Quick stats in sidebar
     with st.sidebar:
@@ -1005,6 +1208,11 @@ def main():
             st.session_state['include_mda'] = include_mda
             st.session_state['ai_analysis'] = ai_analysis
             st.session_state['export_csv'] = export_csv
+            # Clear previous results when starting new analysis
+            if 'result' in st.session_state:
+                del st.session_state['result']
+            # Reset price period to default for new ticker
+            st.session_state['price_period'] = '1y'
 
     # Main analysis
     if st.session_state.get('run_analysis') and st.session_state.get('ticker'):
@@ -1022,10 +1230,16 @@ def main():
             st.session_state['run_analysis'] = False
             return
 
-        # Display results
-        display_analysis_results(result, export_csv)
-
+        # Store results in session state so they persist across button clicks
+        st.session_state['result'] = result
+        st.session_state['export_csv'] = export_csv
         st.session_state['run_analysis'] = False
+
+    # Display results if they exist in session state
+    if st.session_state.get('result'):
+        result = st.session_state['result']
+        export_csv = st.session_state.get('export_csv', False)
+        display_analysis_results(result, export_csv)
     else:
         display_welcome_screen()
 
